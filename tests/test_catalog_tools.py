@@ -22,14 +22,20 @@ from update_products import build_parser
 class FeedFileTests(unittest.TestCase):
     """Verify feed persistence and root validation."""
 
-    def test_missing_feed_loads_as_empty_and_written_feed_round_trips(self) -> None:
+    def test_written_feed_round_trips(self) -> None:
         with TemporaryDirectory() as directory:
             feed_path = Path(directory) / "feed.json"
 
-            self.assertEqual(load_feed(feed_path), [])
             write_feed(feed_path, [{"id": "one"}])
 
             self.assertEqual(load_feed(feed_path), [{"id": "one"}])
+
+    def test_missing_feed_is_rejected(self) -> None:
+        with TemporaryDirectory() as directory:
+            feed_path = Path(directory) / "missing.json"
+
+            with self.assertRaisesRegex(FileNotFoundError, "does not exist"):
+                load_feed(feed_path)
 
     def test_rejects_non_array_feed(self) -> None:
         with TemporaryDirectory() as directory:

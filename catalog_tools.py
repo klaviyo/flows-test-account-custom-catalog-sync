@@ -106,7 +106,7 @@ DESCRIPTIONS = (
 def load_feed(path: Path) -> list[Product]:
     """Load a feed and verify that its root is a JSON array."""
     if not path.exists():
-        return []
+        raise FileNotFoundError(f"{path} does not exist")
 
     with path.open(encoding="utf-8") as feed_file:
         products = json.load(feed_file)
