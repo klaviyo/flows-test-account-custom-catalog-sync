@@ -37,6 +37,16 @@ class FeedFileTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "does not exist"):
                 load_feed(feed_path)
 
+    def test_failed_write_removes_temporary_file(self) -> None:
+        with TemporaryDirectory() as directory:
+            feed_path = Path(directory) / "feed.json"
+
+            with self.assertRaises(TypeError):
+                write_feed(feed_path, [{"invalid": object()}])
+
+            self.assertEqual(list(Path(directory).glob(".feed.json.*.tmp")), [])
+            self.assertFalse(feed_path.exists())
+
     def test_rejects_non_array_feed(self) -> None:
         with TemporaryDirectory() as directory:
             feed_path = Path(directory) / "feed.json"

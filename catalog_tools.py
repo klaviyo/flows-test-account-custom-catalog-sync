@@ -1,4 +1,4 @@
-"""Create and update deterministic products for custom catalog load tests."""
+"""Create and update fake products for custom catalog load tests."""
 
 from __future__ import annotations
 
@@ -118,18 +118,24 @@ def load_feed(path: Path) -> list[Product]:
 def write_feed(path: Path, products: Sequence[Product]) -> None:
     """Atomically replace a feed with consistently formatted JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=path.parent,
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as temporary_file:
-        json.dump(products, temporary_file, indent=2)
-        temporary_file.write("\n")
-        temporary_path = Path(temporary_file.name)
-    temporary_path.replace(path)
+    temporary_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            json.dump(products, temporary_file, indent=2)
+            temporary_file.write("\n")
+        temporary_path.replace(path)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def _array_content_end(path: Path) -> tuple[int, bool]:
