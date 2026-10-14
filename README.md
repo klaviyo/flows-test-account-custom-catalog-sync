@@ -14,11 +14,18 @@ Each product contains:
 
 - `id`, `title`, `description`, `link`, and HTTPS `image_link`
 - `price` and `currency`
-- `stock`
+- `inventory_quantity` and `inventory_policy`
 - `categories`, `brand`, `sku`, and `radius`
 
-The feed does not currently model product variants because Varun's example
-feeds do not contain a variant structure to follow.
+## Variant limitation
+
+A custom catalog URL feed creates exactly one variant for each product row.
+The generated variant uses the product `id` as its external ID and reads
+`sku`, `price`, `inventory_quantity`, and `inventory_policy` from that row.
+
+The URL feed format cannot define multiple variants under one catalog item.
+Use the Catalog API when a product needs separate variants such as Small,
+Medium, and Large.
 
 ## Add products
 
