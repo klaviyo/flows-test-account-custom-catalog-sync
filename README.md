@@ -83,7 +83,12 @@ Run the interactive checker:
 python3 custom_catalog_checker.py
 ```
 
-Enter the hosted feed URL and indicate whether it uses basic authentication.
+Enter the public raw feed URL:
+
+```text
+https://raw.githubusercontent.com/klaviyo/flows-test-account-custom-catalog-sync/refs/heads/master/feed.json
+```
+
 The checker downloads the JSON and reports good, bad, and total row counts. A
 good product must contain `id`, `title`, `link`, `image_link`, and
 `description`; these field names do not use a `$` prefix.

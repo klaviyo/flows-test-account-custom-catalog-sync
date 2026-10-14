@@ -17,20 +17,15 @@ class FetchFeedTests(unittest.TestCase):
     """Verify feed requests and HTTP failures."""
 
     @patch("custom_catalog_checker.requests.get")
-    def test_fetches_json_with_optional_basic_authentication(self, get: Mock) -> None:
+    def test_fetches_json_from_public_url(self, get: Mock) -> None:
         response = get.return_value
         response.json.return_value = [{"id": "one"}]
 
-        feed = fetch_feed(
-            "https://example.com/feed.json",
-            username="catalog-user",
-            password="catalog-password",
-        )
+        feed = fetch_feed("https://example.com/feed.json")
 
         self.assertEqual(feed, [{"id": "one"}])
         get.assert_called_once_with(
             "https://example.com/feed.json",
-            auth=("catalog-user", "catalog-password"),
             timeout=custom_catalog_checker.REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status.assert_called_once_with()
@@ -41,17 +36,6 @@ class FetchFeedTests(unittest.TestCase):
 
         with self.assertRaisesRegex(requests.HTTPError, "denied"):
             fetch_feed("https://example.com/feed.json")
-
-    @patch("custom_catalog_checker.requests.get")
-    def test_rejects_authentication_over_http(self, get: Mock) -> None:
-        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
-            fetch_feed(
-                "http://example.com/feed.json",
-                username="catalog-user",
-                password="catalog-password",
-            )
-
-        get.assert_not_called()
 
 
 class ValidateFeedTests(unittest.TestCase):
@@ -91,7 +75,7 @@ class InteractiveCheckerTests(unittest.TestCase):
     """Verify prompts, summaries, and process status."""
 
     @patch("custom_catalog_checker.fetch_feed")
-    @patch("builtins.input", side_effect=["https://example.com/feed.json", "n"])
+    @patch("builtins.input", return_value="https://example.com/feed.json")
     def test_main_prints_successful_summary(self, _input: Mock, fetch: Mock) -> None:
         fetch.return_value = [
             {
@@ -111,45 +95,10 @@ class InteractiveCheckerTests(unittest.TestCase):
         self.assertIn("Good rows: 1", output.getvalue())
         self.assertIn("Bad rows: 0", output.getvalue())
         self.assertIn("Total products: 1", output.getvalue())
-        fetch.assert_called_once_with(
-            "https://example.com/feed.json",
-            username=None,
-            password=None,
-        )
-
-    @patch("builtins.input", side_effect=["maybe", "y"])
-    def test_authentication_prompt_retries_invalid_answer(self, _input: Mock) -> None:
-        output = io.StringIO()
-
-        with redirect_stdout(output):
-            authentication_required = custom_catalog_checker._authentication_required()
-
-        self.assertTrue(authentication_required)
-        self.assertIn("Please enter y or n.", output.getvalue())
-
-    @patch("custom_catalog_checker.fetch_feed")
-    @patch("custom_catalog_checker.getpass.getpass", return_value="secret")
-    @patch(
-        "builtins.input",
-        side_effect=["https://example.com/feed.json", "y", "catalog-user"],
-    )
-    def test_main_passes_prompted_authentication(
-        self, _input: Mock, _getpass: Mock, fetch: Mock
-    ) -> None:
-        fetch.return_value = []
-
-        with redirect_stdout(io.StringIO()):
-            status = custom_catalog_checker.main()
-
-        self.assertEqual(status, 0)
-        fetch.assert_called_once_with(
-            "https://example.com/feed.json",
-            username="catalog-user",
-            password="secret",
-        )
+        fetch.assert_called_once_with("https://example.com/feed.json")
 
     @patch("custom_catalog_checker.fetch_feed", return_value=[{"id": "incomplete"}])
-    @patch("builtins.input", side_effect=["https://example.com/feed.json", "n"])
+    @patch("builtins.input", return_value="https://example.com/feed.json")
     def test_main_returns_failure_for_bad_rows(
         self, _input: Mock, _fetch: Mock
     ) -> None:

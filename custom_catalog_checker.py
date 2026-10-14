@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import getpass
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 
@@ -13,28 +11,19 @@ import requests
 # 1. Open Terminal (CMD+Space, then search for "Terminal").
 # 2. Run `cd ~/Desktop`, or change to the directory containing this script.
 # 3. Install dependencies with `python3 -m pip install -r requirements.txt`.
-# 4. Have the feed URL and its username/password ready, if authentication applies.
+# 4. Copy the raw feed URL, for example:
+#    https://raw.githubusercontent.com/klaviyo/flows-test-account-custom-catalog-sync/refs/heads/master/feed.json
 # 5. Run `python3 custom_catalog_checker.py`.
-# 6. Paste the feed URL and answer the authentication prompts.
+# 6. Paste the raw feed URL when prompted.
 # 7. Review the good, bad, and total product counts printed when the check finishes.
 
 REQUIRED_FIELDS = frozenset({"id", "title", "link", "image_link", "description"})
 REQUEST_TIMEOUT_SECONDS = 30
 
 
-def fetch_feed(
-    url: str,
-    *,
-    username: str | None = None,
-    password: str | None = None,
-) -> Any:
-    """Fetch and decode a JSON feed, using basic authentication when supplied."""
-    auth = (
-        (username, password) if username is not None and password is not None else None
-    )
-    if auth is not None and urlparse(url).scheme.casefold() != "https":
-        raise ValueError("authenticated feed URLs must use HTTPS")
-    response = requests.get(url, auth=auth, timeout=REQUEST_TIMEOUT_SECONDS)
+def fetch_feed(url: str) -> Any:
+    """Fetch and decode a public JSON feed."""
+    response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
 
@@ -63,26 +52,12 @@ def validate_feed(feed: Any) -> tuple[int, int, list[str]]:
     return good_count, len(errors), errors
 
 
-def _authentication_required() -> bool:
-    """Prompt until the user answers the authentication question with y or n."""
-    while True:
-        answer = input("Does this require authentication? y/n: ").strip().casefold()
-        if answer in {"y", "n"}:
-            return answer == "y"
-        print("Please enter y or n.")
-
-
 def main() -> int:
     """Run the interactive checker and return a shell-friendly status code."""
     url = input("URL: ").strip()
-    username = None
-    password = None
-    if _authentication_required():
-        username = input("Username: ").strip()
-        password = getpass.getpass("Password: ")
 
     try:
-        feed = fetch_feed(url, username=username, password=password)
+        feed = fetch_feed(url)
         good_count, bad_count, errors = validate_feed(feed)
     except (requests.RequestException, ValueError) as error:
         print(f"Feed check failed: {error}")
