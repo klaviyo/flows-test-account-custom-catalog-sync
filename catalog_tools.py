@@ -14,6 +14,8 @@ Product = dict[str, Any]
 
 ID_PREFIX = "FEED-"
 PRICE_QUANTUM = Decimal("0.01")
+# DENY makes zero inventory suppress the feed-created variant from recommendations.
+INVENTORY_POLICY_DENY = 1
 
 # These paths mirror the categories in Varun's large custom-catalog test feed.
 CATEGORY_PATHS = (
@@ -260,7 +262,8 @@ def generate_products(count: int, *, seed: int = 4236) -> Iterator[Product]:
             "price": f"{price:.2f}",
             "currency": "USD",
             "sku": f"{brand[:3].upper()}-{product_uuid}",
-            "stock": random_generator.randrange(0, 1_001),
+            "inventory_quantity": random_generator.randrange(0, 1_001),
+            "inventory_policy": INVENTORY_POLICY_DENY,
         }
 
 
@@ -334,7 +337,7 @@ def update_products(
     if mode == "inventory" and not percentage and amount != amount.to_integral_value():
         raise ValueError("raw inventory amounts must be whole numbers")
 
-    field = "price" if mode == "price" else "stock"
+    field = "price" if mode == "price" else "inventory_quantity"
     updated_count = 0
     for product in products:
         if updated_count >= count:

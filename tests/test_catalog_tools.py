@@ -108,9 +108,11 @@ class GenerateProductsTests(unittest.TestCase):
                 "price",
                 "currency",
                 "sku",
-                "stock",
+                "inventory_quantity",
+                "inventory_policy",
             },
         )
+        self.assertEqual(products[0]["inventory_policy"], 1)
 
     def test_separate_batches_do_not_reuse_ids(self) -> None:
         first_ids = {product["id"] for product in generate_products(10)}
@@ -132,19 +134,22 @@ class UpdateProductsTests(unittest.TestCase):
                 "id": "one",
                 "categories": ["Electronics", "Audio", "Headphones"],
                 "price": "100.00",
-                "stock": 5,
+                "inventory_quantity": 5,
+                "inventory_policy": 1,
             },
             {
                 "id": "two",
                 "categories": ["Home", "Lighting", "Smart"],
                 "price": "50.00",
-                "stock": 20,
+                "inventory_quantity": 20,
+                "inventory_policy": 1,
             },
             {
                 "id": "three",
                 "categories": ["Electronics", "Gaming", "Controllers"],
                 "price": "25.00",
-                "stock": 100,
+                "inventory_quantity": 100,
+                "inventory_policy": 1,
             },
         ]
 
@@ -173,7 +178,7 @@ class UpdateProductsTests(unittest.TestCase):
 
         self.assertEqual(updated, 1)
         self.assertEqual(
-            [product["stock"] for product in self.products],
+            [product["inventory_quantity"] for product in self.products],
             [7, 20, 100],
         )
 
@@ -201,7 +206,7 @@ class UpdateProductsTests(unittest.TestCase):
             drop_amount="10%",
         )
 
-        self.assertEqual(self.products[0]["stock"], 4)
+        self.assertEqual(self.products[0]["inventory_quantity"], 4)
 
     def test_formats_price_target_and_accepts_inventory_target(self) -> None:
         update_products(
@@ -218,7 +223,7 @@ class UpdateProductsTests(unittest.TestCase):
         )
 
         self.assertEqual(self.products[0]["price"], "12.35")
-        self.assertEqual(self.products[0]["stock"], 3)
+        self.assertEqual(self.products[0]["inventory_quantity"], 3)
 
     def test_requires_exactly_one_amount(self) -> None:
         with self.assertRaisesRegex(ValueError, "exactly one"):
