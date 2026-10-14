@@ -103,6 +103,33 @@ good product must contain `id`, `title`, `link`, `image_link`, and
 The full terminal instructions from the internal runbook are also included as
 comments at the top of `custom_catalog_checker.py`.
 
+## Create profiles
+
+Install the dependencies and provide a private API key for the target test
+account. The key must have the `profiles:write` scope.
+
+```bash
+python3 -m pip install -r requirements.txt
+read -s "KLAVIYO_PRIVATE_API_KEY? Paste the private API key, then press Enter: "
+echo
+export KLAVIYO_PRIVATE_API_KEY
+```
+
+The `read` command is where you paste the private key. It hides the value while
+you type and avoids saving the key in shell history.
+
+Run the script with the number of new profiles to create as its only argument:
+
+```bash
+python3 create_profiles.py 500
+```
+
+Each profile receives a Faker-generated readable name, an email such as
+`steve_smith_<uuid>@example.com`, a UUID-based external ID, and custom
+properties identifying it as FP-4236 load-test data. Requests are paced at 370
+per minute—below the 750/minute steady limit—and retry when the API responds
+with `429`.
+
 ## Test
 
 Run the standard-library test suite:
