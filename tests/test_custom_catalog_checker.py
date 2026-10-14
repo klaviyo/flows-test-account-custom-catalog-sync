@@ -42,6 +42,17 @@ class FetchFeedTests(unittest.TestCase):
         with self.assertRaisesRegex(requests.HTTPError, "denied"):
             fetch_feed("https://example.com/feed.json")
 
+    @patch("custom_catalog_checker.requests.get")
+    def test_rejects_authentication_over_http(self, get: Mock) -> None:
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            fetch_feed(
+                "http://example.com/feed.json",
+                username="catalog-user",
+                password="catalog-password",
+            )
+
+        get.assert_not_called()
+
 
 class ValidateFeedTests(unittest.TestCase):
     """Verify required plain-name fields and row diagnostics."""

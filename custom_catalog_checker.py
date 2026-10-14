@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import getpass
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -31,6 +32,8 @@ def fetch_feed(
     auth = (
         (username, password) if username is not None and password is not None else None
     )
+    if auth is not None and urlparse(url).scheme.casefold() != "https":
+        raise ValueError("authenticated feed URLs must use HTTPS")
     response = requests.get(url, auth=auth, timeout=REQUEST_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
