@@ -69,6 +69,28 @@ Raw inventory values must be whole numbers. Percentage inventory changes are
 rounded to the nearest whole unit. Price values are rounded to cents. Drops
 never reduce either field below zero.
 
+## Check a hosted feed
+
+Install the checker dependency:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+Run the interactive checker:
+
+```bash
+python3 custom_catalog_checker.py
+```
+
+Enter the hosted feed URL and indicate whether it uses basic authentication.
+The checker downloads the JSON and reports good, bad, and total row counts. A
+good product must contain `id`, `title`, `link`, `image_link`, and
+`description`; these field names do not use a `$` prefix.
+
+The full terminal instructions from the internal runbook are also included as
+comments at the top of `custom_catalog_checker.py`.
+
 ## Test
 
 Run the standard-library test suite:
