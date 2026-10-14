@@ -110,13 +110,12 @@ account. The key must have the `profiles:write` scope.
 
 ```bash
 python3 -m pip install -r requirements.txt
-read -s "KLAVIYO_PRIVATE_API_KEY? Paste the private API key, then press Enter: "
-echo
-export KLAVIYO_PRIVATE_API_KEY
+export KLAVIYO_PRIVATE_API_KEY="$(python3 -c \
+  'import getpass; print(getpass.getpass("Paste the private API key: "))')"
 ```
 
-The `read` command is where you paste the private key. It hides the value while
-you type and avoids saving the key in shell history.
+The Python prompt works in both zsh and bash. It hides the value while you type
+and avoids saving the key in shell history.
 
 Run the script with the number of new profiles to create as its only argument:
 
