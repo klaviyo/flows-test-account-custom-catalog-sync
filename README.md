@@ -134,6 +134,77 @@ with `429` or times out. The script prints confirmed progress every 25 profiles.
 If the batch stops, it reports the confirmed count; the final timed-out request
 may still have reached the API.
 
+## Create catalog events
+
+`create_events.py` uses existing profiles and catalog products to submit
+item-level events through the Bulk Create Events API. Use a private API key for
+the target test account with these scopes:
+
+- `profiles:read`
+- `catalogs:read`
+- `events:write`
+
+Set up the virtual environment and `KLAVIYO_PRIVATE_API_KEY` as shown in
+[Create profiles](#create-profiles), then provide one or more metric counts:
+
+```bash
+python3 create_events.py \
+  --metric viewed-product=500 \
+  --metric started-checkout=500
+```
+
+Supported metric arguments are:
+
+- `viewed-product`
+- `started-checkout`
+- `added-to-cart`
+- `ordered-product`
+
+Repeated arguments for the same metric are added together. The script queries
+only profiles where `load_test` is `true`. It uses distinct profiles and
+products first, then cycles through the available pool when an event count is
+larger than that pool.
+
+Use `--overlap-count` to make part of the requested `Ordered Product` count
+exclude profiles from a catalog-change audience. Each overlapping order uses
+the same profile and product as one requested inclusion event:
+
+```bash
+python3 create_events.py \
+  --metric viewed-product=500 \
+  --metric ordered-product=100 \
+  --overlap-count 100
+```
+
+The overlap count cannot exceed either the combined inclusion-event count or
+the `Ordered Product` count. It does not create extra events; every metric's
+requested count remains exact.
+
+The current script does not create any variant-level events. All generated
+events contain item-level product IDs but no variant identifier. This is
+sufficient for load testing Price Drop flows because Price Drop supports only
+item-level products. Load testing variant-level Low Inventory flows will
+require additional implementation.
+
+The event property paths mirror Jomashop's Price Drop overrides:
+
+- Viewed Product: top-level `ProductID` and `Price`
+- Ordered Product: top-level `ProductID`
+- Started Checkout: an `Items` list containing `ProductID` and `ItemPrice`
+- Added to Cart: top-level `ProductID` and `Price` until a Jomashop-specific
+  schema is available
+
+The script reads `external_id` and current `price` from the Catalog Variants
+API. It assumes each item and its single generated variant share the same
+external ID, as they do for this repository's URL feed. Verify this before
+using another company's catalog: a feed with independently identified
+variants requires an explicit variant-to-parent-item mapping.
+
+The API accepts up to 1,000 events or 5 MB per job. The script splits larger
+runs, stays below the steady rate limit, retries transient failures, and prints
+accepted progress. An accepted job is queued for asynchronous processing; it
+does not mean every event is immediately visible in Klaviyo.
+
 ## Test
 
 Run the standard-library test suite:
