@@ -130,7 +130,9 @@ Each profile receives a Faker-generated readable name, an email such as
 `steve_smith_<uuid>@example.com`, a UUID-based external ID, and custom
 properties identifying it as FP-4236 load-test data. Requests are paced at 370
 per minute—below the 750/minute steady limit—and retry when the API responds
-with `429`.
+with `429` or times out. The script prints confirmed progress every 25 profiles.
+If the batch stops, it reports the confirmed count; the final timed-out request
+may still have reached the API.
 
 ## Test
 

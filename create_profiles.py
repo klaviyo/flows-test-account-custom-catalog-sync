@@ -20,12 +20,28 @@ API_REVISION = "2026-07-15"
 API_KEY_ENVIRONMENT_VARIABLE = "KLAVIYO_PRIVATE_API_KEY"
 REQUEST_TIMEOUT_SECONDS = 30
 MAX_RATE_LIMIT_RETRIES = 5
+MAX_TIMEOUT_RETRIES = 3
 DEFAULT_RETRY_AFTER_SECONDS = 1.0
+TIMEOUT_RETRY_BASE_SECONDS = 1.0
+PROGRESS_INTERVAL = 25
 
 # Use roughly half the 750/min steady limit to leave room for other API clients.
 REQUEST_INTERVAL_SECONDS = 60 / 370
 
 FAKE = Faker()
+
+
+class ProfileBatchError(RuntimeError):
+    """Report confirmed progress when a profile batch stops early."""
+
+    def __init__(self, confirmed_count: int, requested_count: int, cause: Exception):
+        self.confirmed_count = confirmed_count
+        self.requested_count = requested_count
+        self.cause = cause
+        super().__init__(
+            f"stopped after {confirmed_count} of {requested_count} profiles "
+            f"were confirmed: {cause}"
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -75,7 +91,7 @@ def create_profile(
     payload: dict[str, Any],
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
-    """Create one profile, honoring server-directed retries for rate limits."""
+    """Create one profile, retrying rate limits and transient timeouts."""
     headers = {
         "Authorization": f"Klaviyo-API-Key {api_key}",
         "accept": "application/vnd.api+json",
@@ -83,18 +99,35 @@ def create_profile(
         "revision": API_REVISION,
     }
 
-    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
-        response = session.post(
-            API_URL,
-            headers=headers,
-            json=payload,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
+    rate_limit_retries = 0
+    timeout_retries = 0
+    request_timed_out = False
+    while True:
+        try:
+            response = session.post(
+                API_URL,
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.Timeout:
+            request_timed_out = True
+            if timeout_retries == MAX_TIMEOUT_RETRIES:
+                raise
+            # Backoff gives a slow API time to recover without increasing request load.
+            sleep(TIMEOUT_RETRY_BASE_SECONDS * (2**timeout_retries))
+            timeout_retries += 1
+            continue
+
+        if response.status_code == 409 and request_timed_out:
+            # The UUID identifiers only exist in this payload, so a conflict confirms
+            # that an earlier timed-out attempt reached the API.
+            return str(payload["data"]["attributes"]["external_id"])
         if response.status_code != 429:
             response.raise_for_status()
             return str(response.json()["data"]["id"])
-        if attempt == MAX_RATE_LIMIT_RETRIES:
-            break
+        if rate_limit_retries == MAX_RATE_LIMIT_RETRIES:
+            raise RuntimeError("Profiles API rate limit retries exhausted")
 
         retry_after = response.headers.get("Retry-After")
         try:
@@ -102,8 +135,7 @@ def create_profile(
         except ValueError:
             retry_delay = DEFAULT_RETRY_AFTER_SECONDS
         sleep(max(0, retry_delay))
-
-    raise RuntimeError("Profiles API rate limit retries exhausted")
+        rate_limit_retries += 1
 
 
 def create_profiles(
@@ -112,8 +144,9 @@ def create_profiles(
     api_key: str,
     session: requests.Session | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    progress: Callable[[int, int], None] | None = None,
 ) -> int:
-    """Create the requested number of unique profiles at a rate-safe pace."""
+    """Create profiles at a safe pace and report confirmed batch progress."""
     if count < 0:
         raise ValueError("count must be non-negative")
 
@@ -122,13 +155,22 @@ def create_profiles(
     try:
         for index in range(count):
             payload = build_profile_payload(uuid.uuid4().hex)
-            create_profile(
-                request_session,
-                api_key=api_key,
-                payload=payload,
-                sleep=sleep,
-            )
-            if index < count - 1:
+            try:
+                create_profile(
+                    request_session,
+                    api_key=api_key,
+                    payload=payload,
+                    sleep=sleep,
+                )
+            except (requests.RequestException, RuntimeError, KeyError) as error:
+                raise ProfileBatchError(index, count, error) from error
+
+            confirmed_count = index + 1
+            if progress and (
+                confirmed_count % PROGRESS_INTERVAL == 0 or confirmed_count == count
+            ):
+                progress(confirmed_count, count)
+            if confirmed_count < count:
                 sleep(REQUEST_INTERVAL_SECONDS)
     finally:
         if owned_session:
@@ -146,8 +188,19 @@ def main() -> int:
         parser.error(f"set {API_KEY_ENVIRONMENT_VARIABLE} to the account's API key")
 
     try:
-        created_count = create_profiles(arguments.count, api_key=api_key)
-    except (requests.RequestException, RuntimeError, ValueError, KeyError) as error:
+        created_count = create_profiles(
+            arguments.count,
+            api_key=api_key,
+            progress=lambda confirmed, requested: print(
+                f"Confirmed {confirmed}/{requested} profiles."
+            ),
+        )
+    except ProfileBatchError as error:
+        print(f"Profile creation failed: {error}")
+        if isinstance(error.cause, requests.Timeout):
+            print("The final timed-out request may still have created a profile.")
+        return 1
+    except ValueError as error:
         print(f"Profile creation failed: {error}")
         return 1
 
