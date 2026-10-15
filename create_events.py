@@ -320,6 +320,16 @@ def allocate_events(
         raise ValueError("no profiles with load_test=true were found")
     if not products:
         raise ValueError("no catalog products with prices were found")
+    distinct_resources_needed = (
+        sum(metric.count for metric in metric_counts) - overlap_count
+    )
+    if overlap_count and (
+        len(profile_ids) < distinct_resources_needed
+        or len(products) < distinct_resources_needed
+    ):
+        raise ValueError(
+            "not enough distinct profiles and products to keep overlap count exact"
+        )
 
     assignments: list[EventAssignment] = []
     inclusions: list[EventAssignment] = []

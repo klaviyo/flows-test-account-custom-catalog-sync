@@ -301,6 +301,18 @@ class AllocationTests(unittest.TestCase):
             ["one", "two", "one"],
         )
 
+    def test_rejects_small_pool_when_overlap_must_remain_exact(self) -> None:
+        with self.assertRaisesRegex(ValueError, "keep overlap count exact"):
+            create_events.allocate_events(
+                [
+                    create_events.MetricCount("Viewed Product", 3),
+                    create_events.MetricCount("Ordered Product", 2),
+                ],
+                overlap_count=1,
+                profile_ids=["profile-1", "profile-2", "profile-3"],
+                products=[product("one"), product("two"), product("three")],
+            )
+
     def test_requires_profiles_and_products(self) -> None:
         metric_counts = [create_events.MetricCount("Viewed Product", 1)]
         with self.assertRaisesRegex(ValueError, "no profiles"):
