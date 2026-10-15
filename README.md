@@ -109,13 +109,16 @@ Install the dependencies and provide a private API key for the target test
 account. The key must have the `profiles:write` scope.
 
 ```bash
-python3 -m pip install -r requirements.txt
-export KLAVIYO_PRIVATE_API_KEY="$(python3 -c \
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+export KLAVIYO_PRIVATE_API_KEY="$(python -c \
   'import getpass; print(getpass.getpass("Paste the private API key: "))')"
 ```
 
-The Python prompt works in both zsh and bash. It hides the value while you type
-and avoids saving the key in shell history.
+The virtual environment keeps these dependencies separate from other Python
+projects. The API key prompt works in both zsh and bash, hides the value while
+you type, and avoids saving the key in shell history.
 
 Run the script with the number of new profiles to create as its only argument:
 
