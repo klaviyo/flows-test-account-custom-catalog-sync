@@ -163,7 +163,9 @@ Supported metric arguments are:
 Repeated arguments for the same metric are added together. The script queries
 only profiles where `load_test` is `true`. It uses distinct profiles and
 products first, then cycles through the available pool when an event count is
-larger than that pool.
+larger than that pool. Every event receives a unique UUID, so Events ingestion
+keeps repeated profile/metric combinations distinct even when they have the
+same second-level timestamp.
 
 Use `--overlap-count` to make part of the requested `Ordered Product` count
 exclude profiles from a catalog-change audience. Each overlapping order uses
@@ -179,6 +181,13 @@ python3 create_events.py \
 The overlap count cannot exceed either the combined inclusion-event count or
 the `Ordered Product` count. It does not create extra events; every metric's
 requested count remains exact.
+
+Requested event counts are the script's highest priority. `--overlap-count`
+controls how many Ordered Product events intentionally reuse an inclusion
+profile/product pair, but it is guidance rather than a maximum. If there are
+not enough distinct profiles or products, the script cycles through them and
+continues creating all requested events. This can produce more overlap than
+the supplied value.
 
 The current script does not create any variant-level events. All generated
 events contain item-level product IDs but no variant identifier. This is

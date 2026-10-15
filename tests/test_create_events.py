@@ -301,17 +301,34 @@ class AllocationTests(unittest.TestCase):
             ["one", "two", "one"],
         )
 
-    def test_rejects_small_pool_when_overlap_must_remain_exact(self) -> None:
-        with self.assertRaisesRegex(ValueError, "keep overlap count exact"):
-            create_events.allocate_events(
-                [
-                    create_events.MetricCount("Viewed Product", 3),
-                    create_events.MetricCount("Ordered Product", 2),
-                ],
-                overlap_count=1,
-                profile_ids=["profile-1", "profile-2", "profile-3"],
-                products=[product("one"), product("two"), product("three")],
-            )
+    def test_small_pool_preserves_counts_and_allows_additional_overlap(self) -> None:
+        assignments = create_events.allocate_events(
+            [
+                create_events.MetricCount("Viewed Product", 3),
+                create_events.MetricCount("Ordered Product", 2),
+            ],
+            overlap_count=1,
+            profile_ids=["profile-1", "profile-2", "profile-3"],
+            products=[product("one"), product("two"), product("three")],
+            unique_id=Mock(side_effect=["1", "2", "3", "4", "5"]),
+        )
+
+        self.assertEqual(len(assignments), 5)
+        self.assertEqual(
+            [event.metric_name for event in assignments],
+            [
+                "Viewed Product",
+                "Viewed Product",
+                "Viewed Product",
+                "Ordered Product",
+                "Ordered Product",
+            ],
+        )
+        self.assertEqual(
+            {(event.profile_id, event.product.item_id) for event in assignments[3:]},
+            {("profile-1", "one")},
+        )
+        self.assertEqual(len({event.unique_id for event in assignments}), 5)
 
     def test_requires_profiles_and_products(self) -> None:
         metric_counts = [create_events.MetricCount("Viewed Product", 1)]

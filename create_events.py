@@ -8,6 +8,9 @@ Variant-level Low Inventory testing will require additional implementation.
 Catalog lookup assumes each item and its single generated variant have the same
 external ID. Verify that assumption before using another company's catalog;
 feeds with independently identified variants need explicit parent-item lookup.
+
+Requested event counts take priority over resource uniqueness. Profiles and
+products cycle when needed, so actual overlap can exceed `--overlap-count`.
 """
 
 from __future__ import annotations
@@ -141,8 +144,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help=(
-            "number of Ordered Product events that reuse an inclusion "
-            "profile and product"
+            "number of Ordered Product events that intentionally reuse an "
+            "inclusion profile and product; resource cycling can create more"
         ),
     )
     return parser
@@ -290,7 +293,7 @@ def combine_metric_counts(metric_counts: Sequence[MetricCount]) -> list[MetricCo
 
 
 def validate_request(metric_counts: Sequence[MetricCount], overlap_count: int) -> None:
-    """Reject overlap requests that cannot preserve exact metric counts."""
+    """Reject overlap guidance that cannot fit within exact metric counts."""
     if overlap_count < 0:
         raise ValueError("overlap count must be non-negative")
 
@@ -314,22 +317,12 @@ def allocate_events(
     products: Sequence[CatalogProduct],
     unique_id: Callable[[], str] = lambda: uuid.uuid4().hex,
 ) -> list[EventAssignment]:
-    """Allocate exact metric counts with requested profile/product overlap."""
+    """Prioritize exact counts while cycling resources and guiding overlap."""
     validate_request(metric_counts, overlap_count)
     if not profile_ids:
         raise ValueError("no profiles with load_test=true were found")
     if not products:
         raise ValueError("no catalog products with prices were found")
-    distinct_resources_needed = (
-        sum(metric.count for metric in metric_counts) - overlap_count
-    )
-    if overlap_count and (
-        len(profile_ids) < distinct_resources_needed
-        or len(products) < distinct_resources_needed
-    ):
-        raise ValueError(
-            "not enough distinct profiles and products to keep overlap count exact"
-        )
 
     assignments: list[EventAssignment] = []
     inclusions: list[EventAssignment] = []
