@@ -167,6 +167,20 @@ larger than that pool. Every event receives a unique UUID, so Events ingestion
 keeps repeated profile/metric combinations distinct even when they have the
 same second-level timestamp.
 
+For example, when creating 10,000 events with 500 eligible profiles and 10,000
+products, profiles and products cycle independently:
+
+```text
+Event 1     -> Profile 1,   Product 1
+Event 500   -> Profile 500, Product 500
+Event 501   -> Profile 1,   Product 501
+Event 1000  -> Profile 500, Product 1000
+Event 10000 -> Profile 500, Product 10000
+```
+
+Each product is used once, while each profile receives 20 events. With
+multiple metrics, the assignment index continues across metric groups.
+
 Use `--overlap-count` to make part of the requested `Ordered Product` count
 exclude profiles from a catalog-change audience. Each overlapping order uses
 the same profile and product as one requested inclusion event:
