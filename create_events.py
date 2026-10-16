@@ -461,7 +461,6 @@ def submit_bulk_job(
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """Submit one bulk job, retrying transient failures without duplicating events."""
-    timed_out = False
     url = f"{API_BASE_URL}/event-bulk-create-jobs"
     for retry_index in range(MAX_RETRIES + 1):
         try:
@@ -472,17 +471,12 @@ def submit_bulk_job(
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except (requests.Timeout, requests.ConnectionError):
-            timed_out = True
             if retry_index == MAX_RETRIES:
                 raise
             sleep(RETRY_BASE_SECONDS * (2**retry_index))
             continue
 
         if response.status_code == 202:
-            return
-        if response.status_code == 409 and timed_out:
-            # Stable unique IDs make a conflict evidence that a timed-out job
-            # was already accepted instead of allowing duplicate events.
             return
         if response.status_code != 429 and response.status_code < 500:
             response.raise_for_status()
