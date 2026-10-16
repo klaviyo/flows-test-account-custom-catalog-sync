@@ -377,8 +377,6 @@ def build_event_properties(assignment: EventAssignment) -> dict[str, Any]:
                 }
             ]
         }
-    if assignment.metric_name == ORDERED_PRODUCT:
-        return {"ProductID": product.item_id}
     return {
         "ProductID": product.item_id,
         "Price": product.price,
