@@ -61,6 +61,9 @@ never reduce either field below zero.
 `feed.json`. Merge a PR that contains the updated feed. Then refresh the
 catalog source sync to apply the changes to the test account.
 
+<img width="1978" height="958" alt="image" src="https://github.com/user-attachments/assets/85cd5393-1d45-495f-985f-68283f3b5613" />
+
+
 ## Syncing a custom catalog feed
 
 This repository hosts a public JSON product feed for Flows load-test accounts.
