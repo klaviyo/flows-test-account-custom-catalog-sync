@@ -392,7 +392,7 @@ class PayloadTests(unittest.TestCase):
             "Started Checkout": {
                 "Items": [{"ProductID": "product-1", "ItemPrice": 19.99}]
             },
-            "Ordered Product": {"ProductID": "product-1"},
+            "Ordered Product": {"ProductID": "product-1", "Price": 19.99},
             "Added to Cart": {"ProductID": "product-1", "Price": 19.99},
         }
 
@@ -462,20 +462,23 @@ class SubmissionTests(unittest.TestCase):
 
         sleep.assert_called_once_with(2.0)
 
-    def test_timeout_followed_by_conflict_confirms_prior_acceptance(self) -> None:
+    def test_timeout_followed_by_conflict_is_not_reported_as_accepted(self) -> None:
         session = Mock(spec=requests.Session)
+        conflict = Mock(status_code=409)
+        conflict.raise_for_status.side_effect = requests.HTTPError("conflict")
         session.post.side_effect = [
             requests.ReadTimeout("slow"),
-            Mock(status_code=409),
+            conflict,
         ]
         sleep = Mock()
 
-        create_events.submit_bulk_job(
-            session,
-            api_key="key",
-            payload={"data": {}},
-            sleep=sleep,
-        )
+        with self.assertRaises(requests.HTTPError):
+            create_events.submit_bulk_job(
+                session,
+                api_key="key",
+                payload={"data": {}},
+                sleep=sleep,
+            )
 
         sleep.assert_called_once_with(create_events.RETRY_BASE_SECONDS)
 

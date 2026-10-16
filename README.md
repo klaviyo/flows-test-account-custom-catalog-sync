@@ -212,7 +212,8 @@ require additional implementation.
 The event property paths mirror Jomashop's Price Drop overrides:
 
 - Viewed Product: top-level `ProductID` and `Price`
-- Ordered Product: top-level `ProductID`
+- Ordered Product: top-level `ProductID` and `Price`; Price Drop exclusion
+  matching only needs `ProductID`, but retaining `Price` keeps the event complete
 - Started Checkout: an `Items` list containing `ProductID` and `ItemPrice`
 - Added to Cart: top-level `ProductID` and `Price` until a Jomashop-specific
   schema is available
