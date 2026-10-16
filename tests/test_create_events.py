@@ -392,7 +392,7 @@ class PayloadTests(unittest.TestCase):
             "Started Checkout": {
                 "Items": [{"ProductID": "product-1", "ItemPrice": 19.99}]
             },
-            "Ordered Product": {"ProductID": "product-1"},
+            "Ordered Product": {"ProductID": "product-1", "Price": 19.99},
             "Added to Cart": {"ProductID": "product-1", "Price": 19.99},
         }
 
