@@ -1,31 +1,12 @@
-# Flows test-account custom catalog
+# How to prep a test account for Price Drop/Low Inventory flow load test
 
-This repository hosts a public JSON product feed for Flows load-test accounts.
-The initial `feed.json` contains 10,000 fake products and follows the shape of
-Varun's `feed-large.json`.
+This guide explains how to set up an account for a catalog-change flow load
+test with a custom catalog integration. Use the scripts in this repository to
+create profiles, products, and events. You can also change product prices or
+inventory to trigger a load test.
 
-Use this raw feed URL when configuring a custom catalog source:
-
-```text
-https://raw.githubusercontent.com/klaviyo/flows-test-account-custom-catalog-sync/master/feed.json
-```
-
-Each product contains:
-
-- `id`, `title`, `description`, `link`, and HTTPS `image_link`
-- `price` and `currency`
-- `inventory_quantity` and `inventory_policy`
-- `categories`, `brand`, `sku`, and `radius`
-
-## Variant limitation
-
-A custom catalog URL feed creates exactly one variant for each product row.
-The generated variant uses the product `id` as its external ID and reads
-`sku`, `price`, `inventory_quantity`, and `inventory_policy` from that row.
-
-The URL feed format cannot define multiple variants under one catalog item.
-Use the Catalog API when a product needs separate variants such as Small,
-Medium, and Large.
+`feed.json` is the catalog source for the test account. Scripts that add or
+update products modify this file.
 
 ## Add products
 
@@ -76,7 +57,44 @@ Raw inventory values must be whole numbers. Percentage inventory changes are
 rounded to the nearest whole unit. Price values are rounded to cents. Drops
 never reduce either field below zero.
 
-## Check a hosted feed
+**Important:** `generate_products.py` and `update_products.py` only modify
+`feed.json`. Merge a PR that contains the updated feed. Then refresh the
+catalog source sync to apply the changes to the test account.
+
+## Syncing a custom catalog feed
+
+This repository hosts a public JSON product feed for Flows load-test accounts.
+The initial `feed.json` contains 10,000 fake products and follows the shape of
+Varun's `feed-large.json`.
+
+Use this raw feed URL when configuring a custom catalog source:
+
+```text
+https://raw.githubusercontent.com/klaviyo/flows-test-account-custom-catalog-sync/master/feed.json
+```
+
+Each product contains:
+
+- `id`, `title`, `description`, `link`, and HTTPS `image_link`
+- `price` and `currency`
+- `inventory_quantity` and `inventory_policy`
+- `categories`, `brand`, `sku`, and `radius`
+
+The catalog source configures the field mappings automatically. Update the
+field mappings if necessary.
+
+### Variant limitation
+
+A custom catalog URL feed creates exactly one variant for each product row.
+The generated variant uses the product `id` as its external ID and reads
+`sku`, `price`, `inventory_quantity`, and `inventory_policy` from that row.
+
+The URL feed format cannot define multiple variants under one catalog item.
+Use the Catalog API if you want to create products with multiple variants.
+
+### Validate the format of a hosted feed
+
+Usually, you do not need this step. Use it to validate the catalog feed format.
 
 Install the checker dependency:
 
