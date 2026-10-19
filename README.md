@@ -293,6 +293,9 @@ preparation step whose requirement is already satisfied.
    python3 create_events.py --metric viewed-product=100
    ```
 
+   Wait until the accepted jobs finish processing and confirm that the recent
+   events are visible in the account before changing prices.
+
    These events exercise the EventLog fallback while the older events exercise
    Athena. Some recent events may reach Athena before their parent executes;
    asynchronous ingestion means the script cannot guarantee that they remain
