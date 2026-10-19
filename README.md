@@ -250,6 +250,72 @@ runs, stays below the steady rate limit, retries transient failures, and prints
 accepted progress. An accepted job is queued for asynchronous processing; it
 does not mean every event is immediately visible in Klaviyo.
 
+## Run a Price Drop load test
+
+Use this sequence as the standard Price Drop load-test procedure. Existing
+test data can be reused, so first decide the target scale and skip any
+preparation step whose requirement is already satisfied.
+
+1. Ensure the feed contains the target number of products. For example, add
+   50,000 products to an existing 10,000-product feed:
+
+   ```bash
+   python3 generate_products.py --count 50000
+   ```
+
+2. Merge the updated feed and refresh the custom catalog source. This baseline
+   sync must finish before prices change, especially for newly added products.
+   Confirm that the account contains the expected total number of products.
+
+3. Ensure the account has enough load-test profiles. For example, add 2,000:
+
+   ```bash
+   python3 create_profiles.py 2000
+   ```
+
+4. Ensure every product has an inclusion event within the flow's lookback
+   window. To cover 60,000 discovered products exactly once, create 60,000
+   Viewed Product events:
+
+   ```bash
+   python3 create_events.py --metric viewed-product=60000
+   ```
+
+   Confirm that the script discovers 60,000 products before approving the
+   submission.
+
+5. Wait until the events are visible on Athena and have aged beyond the
+   EventLog fallback window. Do not continue until both conditions are true.
+
+6. Shortly before changing prices, create a small recent-event population:
+
+   ```bash
+   python3 create_events.py --metric viewed-product=100
+   ```
+
+   These events exercise the EventLog fallback while the older events exercise
+   Athena. Some recent events may reach Athena before their parent executes;
+   asynchronous ingestion means the script cannot guarantee that they remain
+   exclusive to EventLog.
+
+7. Drop every product's price and merge the updated feed. For a 60,000-product
+   feed and a $1 drop:
+
+   ```bash
+   python3 update_products.py price --count 60000 --drop-amount 1
+   ```
+
+8. Refresh the custom catalog source again. Record the sync time and monitor
+   side-effect verification, parent creation, audience building, internal
+   events, and end-to-end completion.
+
+Products, profiles, and historical events do not need to be recreated for
+every run. For example, after a recent test whose events remain inside the
+flow's lookback window, it may be sufficient to create only the 100 recent
+events, change prices, and sync again. Always perform the baseline catalog sync
+when adding products, and verify the current product count before relying on
+one event per product.
+
 ## Test
 
 Run the standard-library test suite:
