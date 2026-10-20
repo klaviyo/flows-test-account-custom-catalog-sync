@@ -8,6 +8,25 @@ inventory to trigger a load test.
 `feed.json` is the catalog source for the test account. Scripts that add or
 update products modify this file.
 
+## Set up API access
+
+Before running `create_profiles.py` or `create_events.py`, obtain a private API
+key from the target test account. Create a virtual environment, install the
+dependencies, and save the key in the current terminal session:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+export KLAVIYO_PRIVATE_API_KEY="$(python -c \
+  'import getpass; print(getpass.getpass("Paste the private API key: "))')"
+```
+
+The prompt hides the key and keeps it out of shell history. The exported value
+exists only in the current terminal session, so repeat the `source` and
+`export` commands after opening a new terminal. Feed generation, feed updates,
+and local feed validation do not require an API key.
+
 ## Add products
 
 `generate_products.py` creates the feed when it does not exist or appends to
@@ -124,22 +143,31 @@ good product must contain `id`, `title`, `link`, `image_link`, and
 The full terminal instructions from the internal runbook are also included as
 comments at the top of `custom_catalog_checker.py`.
 
+## Enable Athena audience building for a custom catalog
+
+Custom catalog load tests require additional configuration before Athena can
+build the audience:
+
+1. Configure the catalog-change metric override on Staffside for the test
+   account. Its product ID, price, and product-list paths must match the event
+   schema submitted by the integration.
+2. Ensure those field paths are supported by the
+   `flows_catalog_change_audience_building_events` materialized-views job
+   mapping. The current event generator uses the qualified Jomashop-compatible
+   paths already supported by that mapping. If the generated event schema
+   changes, update and deploy the materialized-views mapping before running the
+   load test.
+3. Add the load-test company ID to the
+   `flows_ccp_custom_catalog_athena_enabled` Statsig gate.
+
+Do not start the Price Drop load test until all three requirements are
+confirmed. Otherwise, Athena can omit the custom events or the account can use
+the wrong audience-building path.
+
 ## Create profiles
 
-Install the dependencies and provide a private API key for the target test
-account. The key must have the `profiles:write` scope.
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-export KLAVIYO_PRIVATE_API_KEY="$(python -c \
-  'import getpass; print(getpass.getpass("Paste the private API key: "))')"
-```
-
-The virtual environment keeps these dependencies separate from other Python
-projects. The API key prompt works in both zsh and bash, hides the value while
-you type, and avoids saving the key in shell history.
+Complete [Set up API access](#set-up-api-access) with a key that has the
+`profiles:write` scope.
 
 Run the script with the number of new profiles to create as its only argument:
 
@@ -166,7 +194,7 @@ the target test account with these scopes:
 - `events:write`
 
 Set up the virtual environment and `KLAVIYO_PRIVATE_API_KEY` as shown in
-[Create profiles](#create-profiles), then provide one or more metric counts:
+[Set up API access](#set-up-api-access), then provide one or more metric counts:
 
 ```bash
 python3 create_events.py \
@@ -180,6 +208,15 @@ Supported metric arguments are:
 - `started-checkout`
 - `added-to-cart`
 - `ordered-product`
+
+By default, the payload omits `time`, so Klaviyo assigns ingestion time. Use
+`--days` to distribute explicit UTC timestamps uniformly across a historical
+window. For example, 30,000 events over 30 days produces approximately 1,000
+events in each consecutive 24-hour period:
+
+```bash
+python3 create_events.py --metric viewed-product=30000 --days 30
+```
 
 Repeated arguments for the same metric are added together. The script queries
 only profiles where `load_test` is `true`. It uses distinct profiles and
@@ -278,7 +315,7 @@ preparation step whose requirement is already satisfied.
    Viewed Product events:
 
    ```bash
-   python3 create_events.py --metric viewed-product=60000
+   python3 create_events.py --metric viewed-product=60000 --days 30
    ```
 
    Confirm that the script discovers 60,000 products before approving the

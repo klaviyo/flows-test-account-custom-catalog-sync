@@ -22,7 +22,8 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -76,6 +77,7 @@ class EventAssignment:
     metric_name: str
     product: CatalogProduct
     unique_id: str
+    event_time: str | None = None
 
 
 class EventBatchError(RuntimeError):
@@ -115,6 +117,17 @@ def parse_metric_count(value: str) -> MetricCount:
     return MetricCount(metric_name, count)
 
 
+def positive_int(value: str) -> int:
+    """Parse a strictly positive integer CLI value."""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the bulk event generator command-line interface."""
     parser = argparse.ArgumentParser(
@@ -146,6 +159,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "number of Ordered Product events that intentionally reuse an "
             "inclusion profile and product; resource cycling can create more"
+        ),
+    )
+    parser.add_argument(
+        "--days",
+        type=positive_int,
+        help=(
+            "spread event timestamps evenly across the preceding number of days; "
+            "omit to let Klaviyo assign ingestion time"
         ),
     )
     return parser
@@ -365,6 +386,37 @@ def allocate_events(
     return assignments
 
 
+def spread_event_times(
+    assignments: Sequence[EventAssignment],
+    days: int | None,
+    *,
+    now: datetime | None = None,
+) -> list[EventAssignment]:
+    """Optionally distribute event timestamps uniformly over a historical window."""
+    if days is None:
+        return list(assignments)
+    if days <= 0:
+        raise ValueError("days must be positive")
+    if not assignments:
+        return []
+
+    window_end = now or datetime.now(timezone.utc)
+    if window_end.tzinfo is None:
+        raise ValueError("now must include a timezone")
+    window_start = window_end - timedelta(days=days)
+    interval = timedelta(days=days) / len(assignments)
+
+    return [
+        replace(
+            assignment,
+            event_time=(window_start + interval * (index + 0.5))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+        for index, assignment in enumerate(assignments)
+    ]
+
+
 def build_event_properties(assignment: EventAssignment) -> dict[str, Any]:
     """Build metric-specific item paths matching Jomashop's CCP extractors."""
     product = assignment.product
@@ -402,6 +454,8 @@ def build_bulk_payload(assignments: Sequence[EventAssignment]) -> dict[str, Any]
                 "unique_id": assignment.unique_id,
             },
         }
+        if assignment.event_time is not None:
+            event["attributes"]["time"] = assignment.event_time
         grouped.setdefault(assignment.profile_id, []).append(event)
 
     bulk_entries = [
@@ -528,10 +582,12 @@ def create_events(
     metric_counts: Sequence[MetricCount],
     *,
     overlap_count: int,
+    days: int | None = None,
     api_key: str,
     session: requests.Session | None = None,
     sleep: Callable[[float], None] = time.sleep,
     progress: Callable[[int, int, int], None] | None = None,
+    now: datetime | None = None,
 ) -> int:
     """Discover resources, allocate events, and submit all bulk jobs."""
     combined_counts = combine_metric_counts(metric_counts)
@@ -560,6 +616,7 @@ def create_events(
             profile_ids=profile_ids,
             products=products,
         )
+        assignments = spread_event_times(assignments, days, now=now)
         return submit_events(
             assignments,
             api_key=api_key,
@@ -584,6 +641,7 @@ def main() -> int:
         accepted_count = create_events(
             arguments.metrics,
             overlap_count=arguments.overlap_count,
+            days=arguments.days,
             api_key=api_key,
             progress=lambda accepted, total, jobs: print(
                 f"Accepted {accepted}/{total} events across {jobs} jobs."
