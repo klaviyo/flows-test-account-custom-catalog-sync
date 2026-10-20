@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import Mock, call, patch
 
 import requests
@@ -57,11 +58,27 @@ class ParserTests(unittest.TestCase):
                 "ordered-product=5",
                 "--overlap-count",
                 "5",
+                "--days",
+                "30",
             ]
         )
 
         self.assertEqual(len(arguments.metrics), 2)
         self.assertEqual(arguments.overlap_count, 5)
+        self.assertEqual(arguments.days, 30)
+
+    def test_days_is_optional_and_must_be_positive(self) -> None:
+        arguments = create_events.build_parser().parse_args(
+            ["--metric", "viewed-product=1"]
+        )
+
+        self.assertIsNone(arguments.days)
+        for value in ("0", "-1", "nope"):
+            with self.subTest(value=value):
+                with self.assertRaises(SystemExit):
+                    create_events.build_parser().parse_args(
+                        ["--metric", "viewed-product=1", "--days", value]
+                    )
 
     def test_help_explains_variant_level_limitation(self) -> None:
         help_text = create_events.build_parser().format_help()
@@ -347,6 +364,34 @@ class AllocationTests(unittest.TestCase):
                 products=[],
             )
 
+    def test_spreads_event_times_evenly_across_days(self) -> None:
+        assignments = [assignment(unique_id=f"event-{index}") for index in range(4)]
+
+        timestamped = create_events.spread_event_times(
+            assignments,
+            2,
+            now=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            [event.event_time for event in timestamped],
+            [
+                "2026-01-01T06:00:00Z",
+                "2026-01-01T18:00:00Z",
+                "2026-01-02T06:00:00Z",
+                "2026-01-02T18:00:00Z",
+            ],
+        )
+        self.assertTrue(all(original.event_time is None for original in assignments))
+
+    def test_omits_event_times_when_days_is_not_set(self) -> None:
+        assignments = [assignment()]
+
+        self.assertEqual(
+            create_events.spread_event_times(assignments, None),
+            assignments,
+        )
+
 
 class PayloadTests(unittest.TestCase):
     """Verify item-level JSON:API payloads and job splitting."""
@@ -385,6 +430,25 @@ class PayloadTests(unittest.TestCase):
             event["metric"]["data"]["attributes"]["name"],
             "Started Checkout",
         )
+        self.assertNotIn("time", event)
+
+    def test_includes_explicit_event_time(self) -> None:
+        payload = create_events.build_bulk_payload(
+            [
+                create_events.EventAssignment(
+                    profile_id="profile-1",
+                    metric_name="Viewed Product",
+                    product=product(),
+                    unique_id="event-1",
+                    event_time="2026-01-01T12:00:00Z",
+                )
+            ]
+        )
+
+        event = payload["data"]["attributes"]["events-bulk-create"]["data"][0][
+            "attributes"
+        ]["events"]["data"][0]["attributes"]
+        self.assertEqual(event["time"], "2026-01-01T12:00:00Z")
 
     def test_builds_jomashop_property_paths_for_each_metric(self) -> None:
         expected_properties = {
