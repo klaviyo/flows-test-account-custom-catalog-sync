@@ -169,6 +169,18 @@ def build_parser() -> argparse.ArgumentParser:
             "omit to let Klaviyo assign ingestion time"
         ),
     )
+    parser.add_argument(
+        "--profiles",
+        type=positive_int,
+        help=(
+            "use at most the first number of eligible load-test profiles, then cycle"
+        ),
+    )
+    parser.add_argument(
+        "--products",
+        type=positive_int,
+        help="use at most the first number of priced catalog products, then cycle",
+    )
     return parser
 
 
@@ -583,6 +595,8 @@ def create_events(
     *,
     overlap_count: int,
     days: int | None = None,
+    profile_count: int | None = None,
+    product_count: int | None = None,
     api_key: str,
     session: requests.Session | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -592,8 +606,22 @@ def create_events(
     """Discover resources, allocate events, and submit all bulk jobs."""
     combined_counts = combine_metric_counts(metric_counts)
     validate_request(combined_counts, overlap_count)
+    for resource_name, resource_count in (
+        ("profile count", profile_count),
+        ("product count", product_count),
+    ):
+        if resource_count is not None and resource_count <= 0:
+            raise ValueError(f"{resource_name} must be positive")
     total_events = sum(metric.count for metric in combined_counts)
     distinct_resources_needed = total_events - overlap_count
+    profiles_needed = min(
+        distinct_resources_needed,
+        profile_count if profile_count is not None else distinct_resources_needed,
+    )
+    products_needed = min(
+        distinct_resources_needed,
+        product_count if product_count is not None else distinct_resources_needed,
+    )
 
     owned_session = session is None
     request_session = session or requests.Session()
@@ -601,13 +629,13 @@ def create_events(
         profile_ids = fetch_load_test_profiles(
             request_session,
             api_key=api_key,
-            needed=distinct_resources_needed,
+            needed=profiles_needed,
             sleep=sleep,
         )
         products = fetch_catalog_products(
             request_session,
             api_key=api_key,
-            needed=distinct_resources_needed,
+            needed=products_needed,
             sleep=sleep,
         )
         assignments = allocate_events(
@@ -642,6 +670,8 @@ def main() -> int:
             arguments.metrics,
             overlap_count=arguments.overlap_count,
             days=arguments.days,
+            profile_count=arguments.profiles,
+            product_count=arguments.products,
             api_key=api_key,
             progress=lambda accepted, total, jobs: print(
                 f"Accepted {accepted}/{total} events across {jobs} jobs."

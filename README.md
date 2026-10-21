@@ -218,6 +218,23 @@ events in each consecutive 24-hour period:
 python3 create_events.py --metric viewed-product=30000 --days 30
 ```
 
+Use `--profiles` and `--products` to limit the resource pools. The script
+fetches only the first requested number of eligible profiles and priced
+products, then cycles within those subsets until it creates every requested
+event:
+
+```bash
+python3 create_events.py \
+  --metric ordered-product=600000 \
+  --profiles 500 \
+  --products 10000
+```
+
+In this example, all 600,000 events use only the first 500 load-test profiles
+and first 10,000 priced products. Other profiles and products are not used.
+If a requested pool size exceeds what the account contains, the script uses
+all available resources in that pool.
+
 Repeated arguments for the same metric are added together. The script queries
 only profiles where `load_test` is `true`. It uses distinct profiles and
 products first, then cycles through the available pool when an event count is
