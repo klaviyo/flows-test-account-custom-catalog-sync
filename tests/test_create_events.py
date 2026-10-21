@@ -60,25 +60,34 @@ class ParserTests(unittest.TestCase):
                 "5",
                 "--days",
                 "30",
+                "--profiles",
+                "500",
+                "--products",
+                "10000",
             ]
         )
 
         self.assertEqual(len(arguments.metrics), 2)
         self.assertEqual(arguments.overlap_count, 5)
         self.assertEqual(arguments.days, 30)
+        self.assertEqual(arguments.profiles, 500)
+        self.assertEqual(arguments.products, 10_000)
 
-    def test_days_is_optional_and_must_be_positive(self) -> None:
+    def test_optional_positive_integer_arguments(self) -> None:
         arguments = create_events.build_parser().parse_args(
             ["--metric", "viewed-product=1"]
         )
 
         self.assertIsNone(arguments.days)
-        for value in ("0", "-1", "nope"):
-            with self.subTest(value=value):
-                with self.assertRaises(SystemExit):
-                    create_events.build_parser().parse_args(
-                        ["--metric", "viewed-product=1", "--days", value]
-                    )
+        self.assertIsNone(arguments.profiles)
+        self.assertIsNone(arguments.products)
+        for option in ("--days", "--profiles", "--products"):
+            for value in ("0", "-1", "nope"):
+                with self.subTest(option=option, value=value):
+                    with self.assertRaises(SystemExit):
+                        create_events.build_parser().parse_args(
+                            ["--metric", "viewed-product=1", option, value]
+                        )
 
     def test_help_explains_variant_level_limitation(self) -> None:
         help_text = create_events.build_parser().format_help()
@@ -619,6 +628,42 @@ class CreateEventsTests(unittest.TestCase):
         self.assertEqual(accepted, 8)
         self.assertEqual(fetch_profiles.call_args.kwargs["needed"], 6)
         self.assertEqual(fetch_products.call_args.kwargs["needed"], 6)
+
+    @patch("create_events.submit_events", return_value=600_000)
+    @patch("create_events.allocate_events", return_value=[assignment()])
+    @patch("create_events.fetch_catalog_products", return_value=[product()])
+    @patch("create_events.fetch_load_test_profiles", return_value=["profile-1"])
+    def test_caps_profile_and_product_discovery_independently(
+        self,
+        fetch_profiles: Mock,
+        fetch_products: Mock,
+        _allocate_events: Mock,
+        _submit_events: Mock,
+    ) -> None:
+        accepted = create_events.create_events(
+            [create_events.MetricCount("Ordered Product", 600_000)],
+            overlap_count=0,
+            profile_count=500,
+            product_count=10_000,
+            api_key="key",
+            session=Mock(spec=requests.Session),
+        )
+
+        self.assertEqual(accepted, 600_000)
+        self.assertEqual(fetch_profiles.call_args.kwargs["needed"], 500)
+        self.assertEqual(fetch_products.call_args.kwargs["needed"], 10_000)
+
+    def test_rejects_non_positive_resource_caps(self) -> None:
+        for argument in ({"profile_count": 0}, {"product_count": -1}):
+            with self.subTest(argument=argument):
+                with self.assertRaisesRegex(ValueError, "must be positive"):
+                    create_events.create_events(
+                        [create_events.MetricCount("Viewed Product", 1)],
+                        overlap_count=0,
+                        api_key="key",
+                        session=Mock(spec=requests.Session),
+                        **argument,
+                    )
 
 
 if __name__ == "__main__":
