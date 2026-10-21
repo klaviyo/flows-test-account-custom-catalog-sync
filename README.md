@@ -300,9 +300,11 @@ using another company's catalog: a feed with independently identified
 variants requires an explicit variant-to-parent-item mapping.
 
 The API accepts up to 1,000 events or 5 MB per job. The script splits larger
-runs, stays below the steady rate limit, retries transient failures, and prints
-accepted progress. An accepted job is queued for asynchronous processing; it
-does not mean every event is immediately visible in Klaviyo.
+runs and streams one bounded batch at a time, so memory use does not grow with
+the total event count. It stays below the steady rate limit, retries transient
+failures, and prints accepted progress. Keep the terminal running until every
+job is accepted. An accepted job is queued for asynchronous processing; it does
+not mean every event is immediately visible in Klaviyo.
 
 ## Run a Price Drop load test
 

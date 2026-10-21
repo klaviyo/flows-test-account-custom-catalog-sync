@@ -327,6 +327,20 @@ class AllocationTests(unittest.TestCase):
             ["one", "two", "one"],
         )
 
+    def test_assignment_iterator_does_not_precompute_events(self) -> None:
+        unique_id = Mock(return_value="one")
+        assignments = create_events.iter_event_assignments(
+            [create_events.MetricCount("Viewed Product", 40_500_000)],
+            overlap_count=0,
+            profile_ids=["profile-1"],
+            products=[product()],
+            unique_id=unique_id,
+        )
+
+        self.assertEqual(unique_id.call_count, 0)
+        self.assertEqual(next(assignments).unique_id, "one")
+        self.assertEqual(unique_id.call_count, 1)
+
     def test_small_pool_preserves_counts_and_allows_additional_overlap(self) -> None:
         assignments = create_events.allocate_events(
             [
@@ -400,6 +414,25 @@ class AllocationTests(unittest.TestCase):
             create_events.spread_event_times(assignments, None),
             assignments,
         )
+
+    def test_timestamp_iterator_only_consumes_requested_events(self) -> None:
+        consumed: list[int] = []
+
+        def assignments():
+            for index in range(2):
+                consumed.append(index)
+                yield assignment(unique_id=f"event-{index}")
+
+        timestamped = create_events.iter_timestamped_assignments(
+            assignments(),
+            total_events=2,
+            days=1,
+            now=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(consumed, [])
+        self.assertEqual(next(timestamped).event_time, "2026-01-01T06:00:00Z")
+        self.assertEqual(consumed, [0])
 
 
 class PayloadTests(unittest.TestCase):
@@ -498,6 +531,21 @@ class PayloadTests(unittest.TestCase):
         batches = list(create_events.iter_job_batches(assignments))
 
         self.assertEqual([len(batch) for batch in batches], [1_000, 1])
+
+    def test_yields_first_batch_without_consuming_the_full_stream(self) -> None:
+        consumed: list[int] = []
+
+        def assignments():
+            for index in range(3):
+                consumed.append(index)
+                yield assignment(unique_id=f"event-{index}")
+
+        with patch.object(create_events, "MAX_EVENTS_PER_JOB", 2):
+            batches = create_events.iter_job_batches(assignments())
+            first_batch = next(batches)
+
+        self.assertEqual(len(first_batch), 2)
+        self.assertEqual(consumed, [0, 1])
 
     def test_splits_jobs_when_payload_exceeds_size_limit(self) -> None:
         assignments = [
@@ -598,22 +646,31 @@ class SubmissionTests(unittest.TestCase):
         self.assertEqual(raised.exception.accepted_jobs, 1)
         self.assertEqual(raised.exception.total_events, 1_001)
 
+    def test_streaming_submission_requires_an_explicit_total(self) -> None:
+        with self.assertRaisesRegex(ValueError, "total_events"):
+            create_events.submit_events(
+                iter([assignment()]),
+                api_key="key",
+                session=Mock(spec=requests.Session),
+            )
+
 
 class CreateEventsTests(unittest.TestCase):
     """Verify discovery sizing and end-to-end orchestration."""
 
     @patch("create_events.submit_events", return_value=8)
-    @patch("create_events.allocate_events", return_value=[assignment()])
+    @patch("create_events.iter_event_assignments")
     @patch("create_events.fetch_catalog_products", return_value=[product()])
     @patch("create_events.fetch_load_test_profiles", return_value=["profile-1"])
     def test_discovers_only_distinct_resources_needed(
         self,
         fetch_profiles: Mock,
         fetch_products: Mock,
-        _allocate_events: Mock,
-        _submit_events: Mock,
+        iter_assignments: Mock,
+        submit_events: Mock,
     ) -> None:
         session = Mock(spec=requests.Session)
+        iter_assignments.return_value = iter([assignment()])
 
         accepted = create_events.create_events(
             [
@@ -628,18 +685,20 @@ class CreateEventsTests(unittest.TestCase):
         self.assertEqual(accepted, 8)
         self.assertEqual(fetch_profiles.call_args.kwargs["needed"], 6)
         self.assertEqual(fetch_products.call_args.kwargs["needed"], 6)
+        self.assertEqual(submit_events.call_args.kwargs["total_events"], 8)
 
     @patch("create_events.submit_events", return_value=600_000)
-    @patch("create_events.allocate_events", return_value=[assignment()])
+    @patch("create_events.iter_event_assignments")
     @patch("create_events.fetch_catalog_products", return_value=[product()])
     @patch("create_events.fetch_load_test_profiles", return_value=["profile-1"])
     def test_caps_profile_and_product_discovery_independently(
         self,
         fetch_profiles: Mock,
         fetch_products: Mock,
-        _allocate_events: Mock,
+        iter_assignments: Mock,
         _submit_events: Mock,
     ) -> None:
+        iter_assignments.return_value = iter([assignment()])
         accepted = create_events.create_events(
             [create_events.MetricCount("Ordered Product", 600_000)],
             overlap_count=0,
