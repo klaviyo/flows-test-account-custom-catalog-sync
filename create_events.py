@@ -21,9 +21,10 @@ import os
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence, Sized
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 from typing import Any
 
 import requests
@@ -342,6 +343,48 @@ def validate_request(metric_counts: Sequence[MetricCount], overlap_count: int) -
         raise ValueError("overlap count exceeds the number of Ordered Product events")
 
 
+def iter_event_assignments(
+    metric_counts: Sequence[MetricCount],
+    *,
+    overlap_count: int,
+    profile_ids: Sequence[str],
+    products: Sequence[CatalogProduct],
+    unique_id: Callable[[], str] = lambda: uuid.uuid4().hex,
+) -> Iterator[EventAssignment]:
+    """Yield exact metric counts while cycling bounded resource pools."""
+    validate_request(metric_counts, overlap_count)
+    if not profile_ids:
+        raise ValueError("no profiles with load_test=true were found")
+    if not products:
+        raise ValueError("no catalog products with prices were found")
+
+    resource_index = 0
+
+    def assignment_for_index(metric_name: str, index: int) -> EventAssignment:
+        return EventAssignment(
+            profile_id=profile_ids[index % len(profile_ids)],
+            metric_name=metric_name,
+            product=products[index % len(products)],
+            unique_id=unique_id(),
+        )
+
+    for metric_count in metric_counts:
+        if metric_count.name == ORDERED_PRODUCT:
+            continue
+        for _ in range(metric_count.count):
+            yield assignment_for_index(metric_count.name, resource_index)
+            resource_index += 1
+
+    ordered_count = sum(
+        metric.count for metric in metric_counts if metric.name == ORDERED_PRODUCT
+    )
+    for overlap_index in range(overlap_count):
+        yield assignment_for_index(ORDERED_PRODUCT, overlap_index)
+    for _ in range(ordered_count - overlap_count):
+        yield assignment_for_index(ORDERED_PRODUCT, resource_index)
+        resource_index += 1
+
+
 def allocate_events(
     metric_counts: Sequence[MetricCount],
     *,
@@ -350,52 +393,47 @@ def allocate_events(
     products: Sequence[CatalogProduct],
     unique_id: Callable[[], str] = lambda: uuid.uuid4().hex,
 ) -> list[EventAssignment]:
-    """Prioritize exact counts while cycling resources and guiding overlap."""
-    validate_request(metric_counts, overlap_count)
-    if not profile_ids:
-        raise ValueError("no profiles with load_test=true were found")
-    if not products:
-        raise ValueError("no catalog products with prices were found")
-
-    assignments: list[EventAssignment] = []
-    inclusions: list[EventAssignment] = []
-    resource_index = 0
-
-    def new_assignment(metric_name: str) -> EventAssignment:
-        nonlocal resource_index
-        assignment = EventAssignment(
-            profile_id=profile_ids[resource_index % len(profile_ids)],
-            metric_name=metric_name,
-            product=products[resource_index % len(products)],
-            unique_id=unique_id(),
+    """Materialize assignments for callers that need the complete small result."""
+    return list(
+        iter_event_assignments(
+            metric_counts,
+            overlap_count=overlap_count,
+            profile_ids=profile_ids,
+            products=products,
+            unique_id=unique_id,
         )
-        resource_index += 1
-        return assignment
-
-    for metric_count in metric_counts:
-        if metric_count.name == ORDERED_PRODUCT:
-            continue
-        for _ in range(metric_count.count):
-            assignment = new_assignment(metric_count.name)
-            assignments.append(assignment)
-            inclusions.append(assignment)
-
-    ordered_count = sum(
-        metric.count for metric in metric_counts if metric.name == ORDERED_PRODUCT
     )
-    for inclusion in inclusions[:overlap_count]:
-        assignments.append(
-            EventAssignment(
-                profile_id=inclusion.profile_id,
-                metric_name=ORDERED_PRODUCT,
-                product=inclusion.product,
-                unique_id=unique_id(),
-            )
-        )
-    for _ in range(ordered_count - overlap_count):
-        assignments.append(new_assignment(ORDERED_PRODUCT))
 
-    return assignments
+
+def iter_timestamped_assignments(
+    assignments: Iterable[EventAssignment],
+    total_events: int,
+    days: int | None,
+    *,
+    now: datetime | None = None,
+) -> Iterator[EventAssignment]:
+    """Yield assignments with optional timestamps across one fixed window."""
+    if days is None:
+        yield from assignments
+        return
+    if days <= 0:
+        raise ValueError("days must be positive")
+    if total_events <= 0:
+        return
+
+    window_end = now or datetime.now(timezone.utc)
+    if window_end.tzinfo is None:
+        raise ValueError("now must include a timezone")
+    window_start = window_end - timedelta(days=days)
+    interval = timedelta(days=days) / total_events
+
+    for index, assignment in enumerate(assignments):
+        yield replace(
+            assignment,
+            event_time=(window_start + interval * (index + 0.5))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
 
 
 def spread_event_times(
@@ -404,29 +442,15 @@ def spread_event_times(
     *,
     now: datetime | None = None,
 ) -> list[EventAssignment]:
-    """Optionally distribute event timestamps uniformly over a historical window."""
-    if days is None:
-        return list(assignments)
-    if days <= 0:
-        raise ValueError("days must be positive")
-    if not assignments:
-        return []
-
-    window_end = now or datetime.now(timezone.utc)
-    if window_end.tzinfo is None:
-        raise ValueError("now must include a timezone")
-    window_start = window_end - timedelta(days=days)
-    interval = timedelta(days=days) / len(assignments)
-
-    return [
-        replace(
-            assignment,
-            event_time=(window_start + interval * (index + 0.5))
-            .isoformat()
-            .replace("+00:00", "Z"),
+    """Materialize timestamped assignments for callers with small inputs."""
+    return list(
+        iter_timestamped_assignments(
+            assignments,
+            len(assignments),
+            days,
+            now=now,
         )
-        for index, assignment in enumerate(assignments)
-    ]
+    )
 
 
 def build_event_properties(assignment: EventAssignment) -> dict[str, Any]:
@@ -499,9 +523,9 @@ def build_bulk_payload(assignments: Sequence[EventAssignment]) -> dict[str, Any]
 
 
 def iter_job_batches(
-    assignments: Sequence[EventAssignment],
+    assignments: Iterable[EventAssignment],
 ) -> Iterator[list[EventAssignment]]:
-    """Split assignments under both API event-count and payload-size limits."""
+    """Consume assignments in bounded jobs under count and payload-size limits."""
 
     def split_for_size(batch: list[EventAssignment]) -> Iterator[list[EventAssignment]]:
         payload_size = len(json.dumps(build_bulk_payload(batch)).encode())
@@ -514,8 +538,8 @@ def iter_job_batches(
         yield from split_for_size(batch[:midpoint])
         yield from split_for_size(batch[midpoint:])
 
-    for start in range(0, len(assignments), MAX_EVENTS_PER_JOB):
-        batch = list(assignments[start : start + MAX_EVENTS_PER_JOB])
+    assignment_iterator = iter(assignments)
+    while batch := list(islice(assignment_iterator, MAX_EVENTS_PER_JOB)):
         yield from split_for_size(batch)
 
 
@@ -556,17 +580,26 @@ def submit_bulk_job(
 
 
 def submit_events(
-    assignments: Sequence[EventAssignment],
+    assignments: Iterable[EventAssignment],
     *,
+    total_events: int | None = None,
     api_key: str,
     session: requests.Session,
     sleep: Callable[[float], None] = time.sleep,
     progress: Callable[[int, int, int], None] | None = None,
 ) -> int:
-    """Submit all event assignments and report accepted job progress."""
-    batches = list(iter_job_batches(assignments))
+    """Stream event batches, discarding each after the API accepts it."""
+    if total_events is None:
+        if not isinstance(assignments, Sized):
+            raise ValueError("total_events is required for streaming assignments")
+        total_events = len(assignments)
+
     accepted_events = 0
-    for job_index, batch in enumerate(batches, start=1):
+    job_index = 0
+    for batch in iter_job_batches(assignments):
+        if job_index:
+            sleep(SUBMISSION_INTERVAL_SECONDS)
+        job_index += 1
         try:
             submit_bulk_job(
                 session,
@@ -577,16 +610,14 @@ def submit_events(
         except (requests.RequestException, RuntimeError, ValueError) as error:
             raise EventBatchError(
                 accepted_events,
-                len(assignments),
+                total_events,
                 job_index - 1,
                 error,
             ) from error
 
         accepted_events += len(batch)
         if progress:
-            progress(accepted_events, len(assignments), job_index)
-        if job_index < len(batches):
-            sleep(SUBMISSION_INTERVAL_SECONDS)
+            progress(accepted_events, total_events, job_index)
     return accepted_events
 
 
@@ -638,15 +669,21 @@ def create_events(
             needed=products_needed,
             sleep=sleep,
         )
-        assignments = allocate_events(
+        assignments = iter_event_assignments(
             combined_counts,
             overlap_count=overlap_count,
             profile_ids=profile_ids,
             products=products,
         )
-        assignments = spread_event_times(assignments, days, now=now)
+        assignments = iter_timestamped_assignments(
+            assignments,
+            total_events,
+            days,
+            now=now,
+        )
         return submit_events(
             assignments,
+            total_events=total_events,
             api_key=api_key,
             session=request_session,
             sleep=sleep,
