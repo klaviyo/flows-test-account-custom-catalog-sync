@@ -303,9 +303,12 @@ The API accepts up to 1,000 events or 5 MB per job. The script splits larger
 runs and streams bounded batches, with at most 32 jobs in flight, so memory use
 does not grow with the total event count. It limits all initial and retry
 attempts together to 140 jobs per minute, below the steady limit of 150, and
-prints accepted progress. Keep the terminal running until every job is
-accepted. An accepted job is queued for asynchronous processing; it does not
-mean every event is immediately visible in Klaviyo.
+gives each worker an isolated HTTP session. Transient failures retry up to 12
+times with exponential backoff capped at 30 seconds. Submission cannot advance
+more than 32 jobs beyond the last contiguous accepted batch, which bounds
+possible duplicate work after a resume. Keep the terminal running until every
+job is accepted. An accepted job is queued for asynchronous processing; it
+does not mean every event is immediately visible in Klaviyo.
 
 If an event run is interrupted, resume after the last accepted event count
 printed by the original run:
