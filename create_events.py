@@ -35,9 +35,12 @@ API_BASE_URL = "https://a.klaviyo.com/api"
 API_REVISION = "2026-10-15"
 API_KEY_ENVIRONMENT_VARIABLE = "KLAVIYO_PRIVATE_API_KEY"
 REQUEST_TIMEOUT_SECONDS = 30
-MAX_RETRIES = 5
+# Large load tests run for hours, so brief API/network outages should not force
+# an operator to restart them.
+MAX_RETRIES = 12
 DEFAULT_RETRY_AFTER_SECONDS = 1.0
 RETRY_BASE_SECONDS = 1.0
+MAX_RETRY_DELAY_SECONDS = 30.0
 
 PROFILE_PAGE_SIZE = 100
 CATALOG_PAGE_SIZE = 100
@@ -254,7 +257,18 @@ def _retry_delay(response: requests.Response, retry_index: int) -> float:
     try:
         return max(0, float(retry_after or ""))
     except ValueError:
-        return RETRY_BASE_SECONDS * (2**retry_index)
+        return min(
+            RETRY_BASE_SECONDS * (2**retry_index),
+            MAX_RETRY_DELAY_SECONDS,
+        )
+
+
+def _connection_retry_delay(retry_index: int) -> float:
+    """Back off connection retries without growing beyond the outage cadence."""
+    return min(
+        RETRY_BASE_SECONDS * (2**retry_index),
+        MAX_RETRY_DELAY_SECONDS,
+    )
 
 
 def get_json(
@@ -277,7 +291,7 @@ def get_json(
         except (requests.Timeout, requests.ConnectionError):
             if retry_index == MAX_RETRIES:
                 raise
-            sleep(RETRY_BASE_SECONDS * (2**retry_index))
+            sleep(_connection_retry_delay(retry_index))
             continue
 
         if response.status_code != 429 and response.status_code < 500:
@@ -639,7 +653,7 @@ def submit_bulk_job(
         except (requests.Timeout, requests.ConnectionError):
             if retry_index == MAX_RETRIES:
                 raise
-            sleep(RETRY_BASE_SECONDS * (2**retry_index))
+            sleep(_connection_retry_delay(retry_index))
             continue
 
         if response.status_code == 202:
@@ -666,6 +680,7 @@ def submit_events(
     progress: Callable[[int, int, int], None] | None = None,
     max_workers: int = MAX_IN_FLIGHT_JOBS,
     rate_limiter: RequestRateLimiter | None = None,
+    session_factory: Callable[[], requests.Session] | None = None,
 ) -> int:
     """Submit bounded batches concurrently under one shared request rate."""
     if total_events is None:
@@ -691,6 +706,31 @@ def submit_events(
     submitted_jobs = 0
     first_error: Exception | None = None
     exhausted = False
+    worker_state = threading.local()
+    worker_sessions: list[requests.Session] = []
+    worker_sessions_lock = threading.Lock()
+
+    def get_submission_session() -> requests.Session:
+        """Give each worker its own persistent HTTP connection pool."""
+        if session_factory is None:
+            return session
+        worker_session = getattr(worker_state, "session", None)
+        if worker_session is None:
+            worker_session = session_factory()
+            worker_state.session = worker_session
+            with worker_sessions_lock:
+                worker_sessions.append(worker_session)
+        return worker_session
+
+    def submit_payload(payload: dict[str, Any]) -> None:
+        """Submit one payload through the current worker's session."""
+        submit_bulk_job(
+            get_submission_session(),
+            api_key=api_key,
+            payload=payload,
+            rate_limiter=limiter,
+            sleep=sleep,
+        )
 
     def record_result(future: futures.Future[None]) -> None:
         nonlocal accepted_events, accepted_jobs, first_error, next_batch_to_report
@@ -711,45 +751,49 @@ def submit_events(
             if progress:
                 progress(accepted_events, total_events, accepted_jobs)
 
-    with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        while pending or not exhausted:
-            while not exhausted and first_error is None and len(pending) < max_workers:
-                try:
-                    batch = next(batches)
-                except StopIteration:
-                    exhausted = True
+    try:
+        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            while pending or not exhausted:
+                while (
+                    not exhausted
+                    and first_error is None
+                    and submitted_jobs - next_batch_to_report < max_workers
+                ):
+                    try:
+                        batch = next(batches)
+                    except StopIteration:
+                        exhausted = True
+                        break
+                    except Exception as error:  # noqa: BLE001
+                        first_error = error
+                        exhausted = True
+                        break
+                    future = executor.submit(
+                        submit_payload,
+                        build_bulk_payload(batch),
+                    )
+                    pending[future] = (submitted_jobs, len(batch))
+                    submitted_jobs += 1
+
+                if not pending:
                     break
-                except Exception as error:  # noqa: BLE001 - report generated progress
-                    first_error = error
-                    exhausted = True
-                    break
-                future = executor.submit(
-                    submit_bulk_job,
-                    session,
-                    api_key=api_key,
-                    payload=build_bulk_payload(batch),
-                    rate_limiter=limiter,
-                    sleep=sleep,
+                completed, _ = futures.wait(
+                    pending,
+                    return_when=futures.FIRST_COMPLETED,
                 )
-                pending[future] = (submitted_jobs, len(batch))
-                submitted_jobs += 1
-
-            if not pending:
-                break
-            completed, _ = futures.wait(
-                pending,
-                return_when=futures.FIRST_COMPLETED,
-            )
-            for future in completed:
-                record_result(future)
-
-            if first_error is not None:
-                for future in pending:
-                    future.cancel()
-                completed, _ = futures.wait(pending)
                 for future in completed:
                     record_result(future)
-                break
+
+                if first_error is not None:
+                    for future in pending:
+                        future.cancel()
+                    completed, _ = futures.wait(pending)
+                    for future in completed:
+                        record_result(future)
+                    break
+    finally:
+        for worker_session in worker_sessions:
+            worker_session.close()
 
     if first_error is not None:
         raise EventBatchError(
@@ -836,6 +880,7 @@ def create_events(
             session=request_session,
             sleep=sleep,
             progress=progress,
+            session_factory=requests.Session if owned_session else None,
         )
     finally:
         if owned_session:

@@ -658,6 +658,26 @@ class SubmissionTests(unittest.TestCase):
         sleep.assert_called_once_with(2.0)
         self.assertEqual(rate_limiter.wait.call_count, 2)
 
+    @patch("create_events.MAX_RETRIES", 6)
+    def test_connection_retries_use_a_capped_backoff(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.post.side_effect = requests.ConnectionError("broken")
+        sleep = Mock()
+
+        with self.assertRaises(requests.ConnectionError):
+            create_events.submit_bulk_job(
+                session,
+                api_key="key",
+                payload={"data": {}},
+                sleep=sleep,
+            )
+
+        self.assertEqual(session.post.call_count, 7)
+        self.assertEqual(
+            sleep.call_args_list,
+            [call(1.0), call(2.0), call(4.0), call(8.0), call(16.0), call(30.0)],
+        )
+
     def test_timeout_followed_by_conflict_is_not_reported_as_accepted(self) -> None:
         session = Mock(spec=requests.Session)
         conflict = Mock(status_code=409)
@@ -700,6 +720,34 @@ class SubmissionTests(unittest.TestCase):
             progress.call_args_list,
             [call(1_000, 1_001, 1), call(1_001, 1_001, 2)],
         )
+
+    @patch("create_events.submit_bulk_job")
+    def test_concurrent_workers_use_isolated_sessions(
+        self, submit_bulk_job: Mock
+    ) -> None:
+        workers_started = threading.Barrier(2)
+        submit_bulk_job.side_effect = lambda *_args, **_kwargs: workers_started.wait(
+            timeout=2
+        )
+        first_session = Mock(spec=requests.Session)
+        second_session = Mock(spec=requests.Session)
+        session_factory = Mock(side_effect=[first_session, second_session])
+
+        accepted = create_events.submit_events(
+            [assignment(unique_id=f"event-{index}") for index in range(1_001)],
+            api_key="key",
+            session=Mock(spec=requests.Session),
+            max_workers=2,
+            rate_limiter=Mock(spec=create_events.RequestRateLimiter),
+            session_factory=session_factory,
+        )
+
+        self.assertEqual(accepted, 1_001)
+        used_sessions = [job.args[0] for job in submit_bulk_job.call_args_list]
+        self.assertTrue(any(value is first_session for value in used_sessions))
+        self.assertTrue(any(value is second_session for value in used_sessions))
+        first_session.close.assert_called_once()
+        second_session.close.assert_called_once()
 
     @patch("create_events.submit_bulk_job")
     def test_submit_events_reports_partial_progress(
@@ -747,26 +795,29 @@ class SubmissionTests(unittest.TestCase):
     ) -> None:
         release_first = threading.Event()
         second_finished = threading.Event()
+        third_started = threading.Event()
 
         def finish_second_job_first(*_args: object, **kwargs: object) -> None:
             entries = kwargs["payload"]["data"]["attributes"]["events-bulk-create"][
                 "data"
             ]
-            event_count = sum(
-                len(entry["attributes"]["events"]["data"]) for entry in entries
-            )
-            if event_count == create_events.MAX_EVENTS_PER_JOB:
+            first_unique_id = entries[0]["attributes"]["events"]["data"][0][
+                "attributes"
+            ]["unique_id"]
+            if first_unique_id == "event-0":
                 release_first.wait(timeout=2)
-            else:
+            elif first_unique_id == "event-1000":
                 second_finished.set()
+            else:
+                third_started.set()
 
         submit_bulk_job.side_effect = finish_second_job_first
         progress = Mock()
         with ThreadPoolExecutor(max_workers=1) as runner:
             submission = runner.submit(
                 create_events.submit_events,
-                [assignment(unique_id=f"event-{index}") for index in range(1_001)],
-                total_events=1_001,
+                [assignment(unique_id=f"event-{index}") for index in range(2_001)],
+                total_events=2_001,
                 api_key="key",
                 session=Mock(spec=requests.Session),
                 progress=progress,
@@ -775,12 +826,18 @@ class SubmissionTests(unittest.TestCase):
             )
             self.assertTrue(second_finished.wait(timeout=2))
             progress.assert_not_called()
+            self.assertFalse(third_started.is_set())
             release_first.set()
-            self.assertEqual(submission.result(timeout=2), 1_001)
+            self.assertEqual(submission.result(timeout=2), 2_001)
 
+        self.assertTrue(third_started.is_set())
         self.assertEqual(
             progress.call_args_list,
-            [call(1_000, 1_001, 1), call(1_001, 1_001, 2)],
+            [
+                call(1_000, 2_001, 1),
+                call(2_000, 2_001, 2),
+                call(2_001, 2_001, 3),
+            ],
         )
 
     def test_streaming_submission_requires_an_explicit_total(self) -> None:
@@ -824,6 +881,39 @@ class CreateEventsTests(unittest.TestCase):
         self.assertEqual(fetch_products.call_args.kwargs["needed"], 6)
         self.assertEqual(submit_events.call_args.kwargs["total_events"], 8)
         self.assertEqual(submit_events.call_args.kwargs["initial_accepted"], 0)
+        self.assertIs(submit_events.call_args.kwargs["session"], session)
+        self.assertIsNone(submit_events.call_args.kwargs["session_factory"])
+
+    def test_owned_session_enables_isolated_worker_sessions(self) -> None:
+        owned_session = Mock(spec=requests.Session)
+        with (
+            patch(
+                "create_events.requests.Session", return_value=owned_session
+            ) as factory,
+            patch(
+                "create_events.fetch_load_test_profiles",
+                return_value=["profile-1"],
+            ),
+            patch(
+                "create_events.fetch_catalog_products",
+                return_value=[product()],
+            ),
+            patch(
+                "create_events.iter_event_assignments",
+                return_value=iter([assignment()]),
+            ),
+            patch("create_events.submit_events", return_value=1) as submit_events,
+        ):
+            accepted = create_events.create_events(
+                [create_events.MetricCount("Viewed Product", 1)],
+                overlap_count=0,
+                api_key="key",
+            )
+
+        self.assertEqual(accepted, 1)
+        self.assertIs(submit_events.call_args.kwargs["session"], owned_session)
+        self.assertIs(submit_events.call_args.kwargs["session_factory"], factory)
+        owned_session.close.assert_called_once()
 
     @patch("create_events.submit_events", return_value=600_000)
     @patch("create_events.iter_event_assignments")
