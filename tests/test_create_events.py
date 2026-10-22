@@ -658,7 +658,7 @@ class SubmissionTests(unittest.TestCase):
         sleep.assert_called_once_with(2.0)
         self.assertEqual(rate_limiter.wait.call_count, 2)
 
-    @patch("create_events.MAX_RETRIES", 6)
+    @patch("create_events.MAX_CONNECTION_RETRIES", 6)
     def test_connection_retries_use_a_capped_backoff(self) -> None:
         session = Mock(spec=requests.Session)
         session.post.side_effect = requests.ConnectionError("broken")
@@ -748,6 +748,60 @@ class SubmissionTests(unittest.TestCase):
         self.assertTrue(any(value is second_session for value in used_sessions))
         first_session.close.assert_called_once()
         second_session.close.assert_called_once()
+
+    @patch("create_events.MAX_CONNECTION_RETRIES", 2)
+    def test_worker_replaces_failed_sessions_and_keeps_retrying(self) -> None:
+        first_session = Mock(spec=requests.Session)
+        second_session = Mock(spec=requests.Session)
+        accepted_session = Mock(spec=requests.Session)
+        first_session.post.side_effect = requests.ConnectionError("first")
+        second_session.post.side_effect = requests.ConnectionError("second")
+        accepted_session.post.return_value = Mock(status_code=202)
+        session_factory = Mock(
+            side_effect=[first_session, second_session, accepted_session]
+        )
+        sleep = Mock()
+
+        accepted = create_events.submit_events(
+            [assignment()],
+            api_key="key",
+            session=Mock(spec=requests.Session),
+            max_workers=1,
+            rate_limiter=Mock(spec=create_events.RequestRateLimiter),
+            session_factory=session_factory,
+            sleep=sleep,
+        )
+
+        self.assertEqual(accepted, 1)
+        self.assertEqual(session_factory.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(1.0), call(2.0)])
+        first_session.close.assert_called_once()
+        second_session.close.assert_called_once()
+        accepted_session.close.assert_called_once()
+
+    @patch("create_events.MAX_CONNECTION_RETRIES", 1)
+    def test_worker_stops_after_connection_retry_limit(self) -> None:
+        first_session = Mock(spec=requests.Session)
+        replacement_session = Mock(spec=requests.Session)
+        first_session.post.side_effect = requests.ConnectionError("first")
+        replacement_session.post.side_effect = requests.ConnectionError("second")
+        session_factory = Mock(side_effect=[first_session, replacement_session])
+
+        with self.assertRaises(create_events.EventBatchError) as raised:
+            create_events.submit_events(
+                [assignment()],
+                api_key="key",
+                session=Mock(spec=requests.Session),
+                max_workers=1,
+                rate_limiter=Mock(spec=create_events.RequestRateLimiter),
+                session_factory=session_factory,
+                sleep=Mock(),
+            )
+
+        self.assertIsInstance(raised.exception.cause, requests.ConnectionError)
+        self.assertEqual(session_factory.call_count, 2)
+        first_session.close.assert_called_once()
+        replacement_session.close.assert_called_once()
 
     @patch("create_events.submit_bulk_job")
     def test_submit_events_reports_partial_progress(
