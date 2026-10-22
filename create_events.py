@@ -18,10 +18,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Sequence, Sized
+from concurrent import futures
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from itertools import islice
@@ -42,8 +44,10 @@ CATALOG_PAGE_SIZE = 100
 MAX_EVENTS_PER_JOB = 1_000
 MAX_PAYLOAD_BYTES = 5_000_000
 
-# Use half the Events API's 150/min steady limit so load tests leave headroom.
-SUBMISSION_INTERVAL_SECONDS = 60 / 75
+# Stay below the Events API's 150/min steady limit while using concurrency to
+# hide individual request latency.
+SUBMISSION_RATE_PER_MINUTE = 140
+MAX_IN_FLIGHT_JOBS = 32
 
 METRIC_NAMES = {
     "viewed-product": "Viewed Product",
@@ -101,6 +105,35 @@ class EventBatchError(RuntimeError):
         )
 
 
+class RequestRateLimiter:
+    """Schedule concurrent request attempts under one process-wide rate."""
+
+    def __init__(
+        self,
+        requests_per_minute: int,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ):
+        if requests_per_minute <= 0:
+            raise ValueError("requests per minute must be positive")
+        self._interval = 60 / requests_per_minute
+        self._sleep = sleep
+        self._monotonic = monotonic
+        self._next_request_at = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        """Wait for this attempt's globally scheduled request slot."""
+        with self._lock:
+            now = self._monotonic()
+            request_at = max(now, self._next_request_at)
+            self._next_request_at = request_at + self._interval
+        delay = request_at - now
+        if delay > 0:
+            self._sleep(delay)
+
+
 def parse_metric_count(value: str) -> MetricCount:
     """Parse a CLI metric slug and positive count from `metric=count`."""
     try:
@@ -126,6 +159,17 @@ def positive_int(value: str) -> int:
         raise argparse.ArgumentTypeError("must be a positive integer") from error
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def non_negative_int(value: str) -> int:
+    """Parse a non-negative integer CLI value."""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from error
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
     return parsed
 
 
@@ -181,6 +225,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--products",
         type=positive_int,
         help="use at most the first number of priced catalog products, then cycle",
+    )
+    parser.add_argument(
+        "--resume-at",
+        type=non_negative_int,
+        default=0,
+        help=(
+            "skip an already accepted event prefix and preserve its original "
+            "resource and timestamp positions"
+        ),
     )
     return parser
 
@@ -349,6 +402,7 @@ def iter_event_assignments(
     overlap_count: int,
     profile_ids: Sequence[str],
     products: Sequence[CatalogProduct],
+    start_index: int = 0,
     unique_id: Callable[[], str] = lambda: uuid.uuid4().hex,
 ) -> Iterator[EventAssignment]:
     """Yield exact metric counts while cycling bounded resource pools."""
@@ -358,7 +412,15 @@ def iter_event_assignments(
     if not products:
         raise ValueError("no catalog products with prices were found")
 
-    resource_index = 0
+    inclusion_count = sum(
+        metric.count for metric in metric_counts if metric.name != ORDERED_PRODUCT
+    )
+    ordered_count = sum(
+        metric.count for metric in metric_counts if metric.name == ORDERED_PRODUCT
+    )
+    total_events = inclusion_count + ordered_count
+    if start_index < 0 or start_index > total_events:
+        raise ValueError("start index must be within the requested event count")
 
     def assignment_for_index(metric_name: str, index: int) -> EventAssignment:
         return EventAssignment(
@@ -368,21 +430,29 @@ def iter_event_assignments(
             unique_id=unique_id(),
         )
 
+    segments: list[tuple[str, int, int]] = []
+    resource_index = 0
     for metric_count in metric_counts:
         if metric_count.name == ORDERED_PRODUCT:
             continue
-        for _ in range(metric_count.count):
-            yield assignment_for_index(metric_count.name, resource_index)
-            resource_index += 1
-
-    ordered_count = sum(
-        metric.count for metric in metric_counts if metric.name == ORDERED_PRODUCT
+        segments.append((metric_count.name, metric_count.count, resource_index))
+        resource_index += metric_count.count
+    segments.extend(
+        (
+            (ORDERED_PRODUCT, overlap_count, 0),
+            (ORDERED_PRODUCT, ordered_count - overlap_count, inclusion_count),
+        )
     )
-    for overlap_index in range(overlap_count):
-        yield assignment_for_index(ORDERED_PRODUCT, overlap_index)
-    for _ in range(ordered_count - overlap_count):
-        yield assignment_for_index(ORDERED_PRODUCT, resource_index)
-        resource_index += 1
+
+    remaining_skip = start_index
+    for metric_name, count, resource_start in segments:
+        segment_start = min(remaining_skip, count)
+        remaining_skip -= segment_start
+        for segment_index in range(segment_start, count):
+            yield assignment_for_index(
+                metric_name,
+                resource_start + segment_index,
+            )
 
 
 def allocate_events(
@@ -400,6 +470,7 @@ def allocate_events(
             overlap_count=overlap_count,
             profile_ids=profile_ids,
             products=products,
+            start_index=0,
             unique_id=unique_id,
         )
     )
@@ -410,6 +481,7 @@ def iter_timestamped_assignments(
     total_events: int,
     days: int | None,
     *,
+    start_index: int = 0,
     now: datetime | None = None,
 ) -> Iterator[EventAssignment]:
     """Yield assignments with optional timestamps across one fixed window."""
@@ -427,7 +499,7 @@ def iter_timestamped_assignments(
     window_start = window_end - timedelta(days=days)
     interval = timedelta(days=days) / total_events
 
-    for index, assignment in enumerate(assignments):
+    for index, assignment in enumerate(assignments, start=start_index):
         yield replace(
             assignment,
             event_time=(window_start + interval * (index + 0.5))
@@ -448,6 +520,7 @@ def spread_event_times(
             assignments,
             len(assignments),
             days,
+            start_index=0,
             now=now,
         )
     )
@@ -548,11 +621,14 @@ def submit_bulk_job(
     *,
     api_key: str,
     payload: dict[str, Any],
+    rate_limiter: RequestRateLimiter | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """Submit one bulk job, retrying transient failures without duplicating events."""
     url = f"{API_BASE_URL}/event-bulk-create-jobs"
     for retry_index in range(MAX_RETRIES + 1):
+        if rate_limiter:
+            rate_limiter.wait()
         try:
             response = session.post(
                 url,
@@ -583,41 +659,105 @@ def submit_events(
     assignments: Iterable[EventAssignment],
     *,
     total_events: int | None = None,
+    initial_accepted: int = 0,
     api_key: str,
     session: requests.Session,
     sleep: Callable[[float], None] = time.sleep,
     progress: Callable[[int, int, int], None] | None = None,
+    max_workers: int = MAX_IN_FLIGHT_JOBS,
+    rate_limiter: RequestRateLimiter | None = None,
 ) -> int:
-    """Stream event batches, discarding each after the API accepts it."""
+    """Submit bounded batches concurrently under one shared request rate."""
     if total_events is None:
         if not isinstance(assignments, Sized):
             raise ValueError("total_events is required for streaming assignments")
         total_events = len(assignments)
+    if initial_accepted < 0 or initial_accepted > total_events:
+        raise ValueError("initial accepted count must be within the total event count")
+    if max_workers <= 0:
+        raise ValueError("max workers must be positive")
 
-    accepted_events = 0
-    job_index = 0
-    for batch in iter_job_batches(assignments):
-        if job_index:
-            sleep(SUBMISSION_INTERVAL_SECONDS)
-        job_index += 1
+    limiter = rate_limiter or RequestRateLimiter(
+        SUBMISSION_RATE_PER_MINUTE,
+        sleep=sleep,
+    )
+    accepted_events = initial_accepted
+    accepted_jobs = 0
+    batches = iter(iter_job_batches(assignments))
+    pending: dict[futures.Future[None], tuple[int, int]] = {}
+    # Only report a contiguous prefix so resume never skips an earlier batch.
+    completed_batches: dict[int, int] = {}
+    next_batch_to_report = 0
+    submitted_jobs = 0
+    first_error: Exception | None = None
+    exhausted = False
+
+    def record_result(future: futures.Future[None]) -> None:
+        nonlocal accepted_events, accepted_jobs, first_error, next_batch_to_report
+        batch_index, batch_size = pending.pop(future)
+        if future.cancelled():
+            return
         try:
-            submit_bulk_job(
-                session,
-                api_key=api_key,
-                payload=build_bulk_payload(batch),
-                sleep=sleep,
-            )
-        except (requests.RequestException, RuntimeError, ValueError) as error:
-            raise EventBatchError(
-                accepted_events,
-                total_events,
-                job_index - 1,
-                error,
-            ) from error
+            future.result()
+        except Exception as error:  # noqa: BLE001 - preserve worker failure details
+            if first_error is None:
+                first_error = error
+            return
+        completed_batches[batch_index] = batch_size
+        while next_batch_to_report in completed_batches:
+            accepted_events += completed_batches.pop(next_batch_to_report)
+            accepted_jobs += 1
+            next_batch_to_report += 1
+            if progress:
+                progress(accepted_events, total_events, accepted_jobs)
 
-        accepted_events += len(batch)
-        if progress:
-            progress(accepted_events, total_events, job_index)
+    with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        while pending or not exhausted:
+            while not exhausted and first_error is None and len(pending) < max_workers:
+                try:
+                    batch = next(batches)
+                except StopIteration:
+                    exhausted = True
+                    break
+                except Exception as error:  # noqa: BLE001 - report generated progress
+                    first_error = error
+                    exhausted = True
+                    break
+                future = executor.submit(
+                    submit_bulk_job,
+                    session,
+                    api_key=api_key,
+                    payload=build_bulk_payload(batch),
+                    rate_limiter=limiter,
+                    sleep=sleep,
+                )
+                pending[future] = (submitted_jobs, len(batch))
+                submitted_jobs += 1
+
+            if not pending:
+                break
+            completed, _ = futures.wait(
+                pending,
+                return_when=futures.FIRST_COMPLETED,
+            )
+            for future in completed:
+                record_result(future)
+
+            if first_error is not None:
+                for future in pending:
+                    future.cancel()
+                completed, _ = futures.wait(pending)
+                for future in completed:
+                    record_result(future)
+                break
+
+    if first_error is not None:
+        raise EventBatchError(
+            accepted_events,
+            total_events,
+            accepted_jobs,
+            first_error,
+        ) from first_error
     return accepted_events
 
 
@@ -628,6 +768,7 @@ def create_events(
     days: int | None = None,
     profile_count: int | None = None,
     product_count: int | None = None,
+    resume_at: int = 0,
     api_key: str,
     session: requests.Session | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -644,6 +785,10 @@ def create_events(
         if resource_count is not None and resource_count <= 0:
             raise ValueError(f"{resource_name} must be positive")
     total_events = sum(metric.count for metric in combined_counts)
+    if resume_at < 0 or resume_at > total_events:
+        raise ValueError("resume count must be within the requested event count")
+    if resume_at == total_events:
+        return total_events
     distinct_resources_needed = total_events - overlap_count
     profiles_needed = min(
         distinct_resources_needed,
@@ -674,16 +819,19 @@ def create_events(
             overlap_count=overlap_count,
             profile_ids=profile_ids,
             products=products,
+            start_index=resume_at,
         )
         assignments = iter_timestamped_assignments(
             assignments,
             total_events,
             days,
+            start_index=resume_at,
             now=now,
         )
         return submit_events(
             assignments,
             total_events=total_events,
+            initial_accepted=resume_at,
             api_key=api_key,
             session=request_session,
             sleep=sleep,
@@ -709,6 +857,7 @@ def main() -> int:
             days=arguments.days,
             profile_count=arguments.profiles,
             product_count=arguments.products,
+            resume_at=arguments.resume_at,
             api_key=api_key,
             progress=lambda accepted, total, jobs: print(
                 f"Accepted {accepted}/{total} events across {jobs} jobs."

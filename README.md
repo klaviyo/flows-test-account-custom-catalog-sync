@@ -300,11 +300,28 @@ using another company's catalog: a feed with independently identified
 variants requires an explicit variant-to-parent-item mapping.
 
 The API accepts up to 1,000 events or 5 MB per job. The script splits larger
-runs and streams one bounded batch at a time, so memory use does not grow with
-the total event count. It stays below the steady rate limit, retries transient
-failures, and prints accepted progress. Keep the terminal running until every
-job is accepted. An accepted job is queued for asynchronous processing; it does
-not mean every event is immediately visible in Klaviyo.
+runs and streams bounded batches, with at most 32 jobs in flight, so memory use
+does not grow with the total event count. It limits all initial and retry
+attempts together to 140 jobs per minute, below the steady limit of 150, and
+prints accepted progress. Keep the terminal running until every job is
+accepted. An accepted job is queued for asynchronous processing; it does not
+mean every event is immediately visible in Klaviyo.
+
+If an event run is interrupted, resume after the last accepted event count
+printed by the original run:
+
+```bash
+python3 create_events.py \
+  --metric viewed-product=40500000 \
+  --days 90 \
+  --resume-at 9640000
+```
+
+Use exactly the same metrics, days, profile cap, product cap, and overlap count
+as the original command. `--resume-at` preserves the original profile/product
+cycle and timestamp positions; changing another generation argument would
+produce a different event sequence. The resume count must be a confirmed
+accepted count because the script does not query previous job status.
 
 ## Run a Price Drop load test
 

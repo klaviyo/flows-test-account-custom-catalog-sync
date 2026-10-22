@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from unittest.mock import Mock, call, patch
 
@@ -64,6 +66,8 @@ class ParserTests(unittest.TestCase):
                 "500",
                 "--products",
                 "10000",
+                "--resume-at",
+                "1000",
             ]
         )
 
@@ -72,6 +76,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(arguments.days, 30)
         self.assertEqual(arguments.profiles, 500)
         self.assertEqual(arguments.products, 10_000)
+        self.assertEqual(arguments.resume_at, 1_000)
 
     def test_optional_positive_integer_arguments(self) -> None:
         arguments = create_events.build_parser().parse_args(
@@ -81,6 +86,7 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(arguments.days)
         self.assertIsNone(arguments.profiles)
         self.assertIsNone(arguments.products)
+        self.assertEqual(arguments.resume_at, 0)
         for option in ("--days", "--profiles", "--products"):
             for value in ("0", "-1", "nope"):
                 with self.subTest(option=option, value=value):
@@ -88,6 +94,12 @@ class ParserTests(unittest.TestCase):
                         create_events.build_parser().parse_args(
                             ["--metric", "viewed-product=1", option, value]
                         )
+        for value in ("-1", "nope"):
+            with self.subTest(option="--resume-at", value=value):
+                with self.assertRaises(SystemExit):
+                    create_events.build_parser().parse_args(
+                        ["--metric", "viewed-product=1", "--resume-at", value]
+                    )
 
     def test_help_explains_variant_level_limitation(self) -> None:
         help_text = create_events.build_parser().format_help()
@@ -370,6 +382,32 @@ class AllocationTests(unittest.TestCase):
         )
         self.assertEqual(len({event.unique_id for event in assignments}), 5)
 
+    def test_resumes_at_global_assignment_index(self) -> None:
+        assignments = list(
+            create_events.iter_event_assignments(
+                [
+                    create_events.MetricCount("Viewed Product", 2),
+                    create_events.MetricCount("Ordered Product", 2),
+                ],
+                overlap_count=1,
+                profile_ids=["profile-1", "profile-2", "profile-3"],
+                products=[product("one"), product("two"), product("three")],
+                start_index=2,
+                unique_id=Mock(side_effect=["order-1", "order-2"]),
+            )
+        )
+
+        self.assertEqual(
+            [
+                (event.metric_name, event.profile_id, event.product.item_id)
+                for event in assignments
+            ],
+            [
+                ("Ordered Product", "profile-1", "one"),
+                ("Ordered Product", "profile-3", "three"),
+            ],
+        )
+
     def test_requires_profiles_and_products(self) -> None:
         metric_counts = [create_events.MetricCount("Viewed Product", 1)]
         with self.assertRaisesRegex(ValueError, "no profiles"):
@@ -433,6 +471,22 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(consumed, [])
         self.assertEqual(next(timestamped).event_time, "2026-01-01T06:00:00Z")
         self.assertEqual(consumed, [0])
+
+    def test_resumed_timestamps_keep_global_positions(self) -> None:
+        timestamped = list(
+            create_events.iter_timestamped_assignments(
+                [assignment(unique_id="three"), assignment(unique_id="four")],
+                total_events=4,
+                days=2,
+                start_index=2,
+                now=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            )
+        )
+
+        self.assertEqual(
+            [event.event_time for event in timestamped],
+            ["2026-01-02T06:00:00Z", "2026-01-02T18:00:00Z"],
+        )
 
 
 class PayloadTests(unittest.TestCase):
@@ -567,21 +621,42 @@ class PayloadTests(unittest.TestCase):
 class SubmissionTests(unittest.TestCase):
     """Verify job retries, pacing, and partial progress."""
 
+    def test_rate_limiter_spaces_request_attempts(self) -> None:
+        sleep = Mock()
+        monotonic = Mock(return_value=100.0)
+        limiter = create_events.RequestRateLimiter(
+            120,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
+
+        limiter.wait()
+        limiter.wait()
+
+        sleep.assert_called_once_with(0.5)
+
+    def test_rate_limiter_rejects_non_positive_rate(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            create_events.RequestRateLimiter(0)
+
     def test_submit_bulk_job_retries_rate_limit(self) -> None:
         session = Mock(spec=requests.Session)
         limited = Mock(status_code=429, headers={"Retry-After": "2"})
         accepted = Mock(status_code=202)
         session.post.side_effect = [limited, accepted]
         sleep = Mock()
+        rate_limiter = Mock(spec=create_events.RequestRateLimiter)
 
         create_events.submit_bulk_job(
             session,
             api_key="key",
             payload={"data": {}},
+            rate_limiter=rate_limiter,
             sleep=sleep,
         )
 
         sleep.assert_called_once_with(2.0)
+        self.assertEqual(rate_limiter.wait.call_count, 2)
 
     def test_timeout_followed_by_conflict_is_not_reported_as_accepted(self) -> None:
         session = Mock(spec=requests.Session)
@@ -604,24 +679,23 @@ class SubmissionTests(unittest.TestCase):
         sleep.assert_called_once_with(create_events.RETRY_BASE_SECONDS)
 
     @patch("create_events.submit_bulk_job")
-    def test_submit_events_paces_jobs_and_reports_progress(
+    def test_submit_events_reports_concurrent_progress(
         self, submit_bulk_job: Mock
     ) -> None:
         assignments = [assignment(unique_id=f"event-{index}") for index in range(1_001)]
-        sleep = Mock()
         progress = Mock()
 
         accepted = create_events.submit_events(
             assignments,
             api_key="key",
             session=Mock(spec=requests.Session),
-            sleep=sleep,
             progress=progress,
+            max_workers=1,
+            rate_limiter=Mock(spec=create_events.RequestRateLimiter),
         )
 
         self.assertEqual(accepted, 1_001)
         self.assertEqual(submit_bulk_job.call_count, 2)
-        sleep.assert_called_once_with(create_events.SUBMISSION_INTERVAL_SECONDS)
         self.assertEqual(
             progress.call_args_list,
             [call(1_000, 1_001, 1), call(1_001, 1_001, 2)],
@@ -639,12 +713,75 @@ class SubmissionTests(unittest.TestCase):
                 assignments,
                 api_key="key",
                 session=Mock(spec=requests.Session),
-                sleep=Mock(),
+                max_workers=1,
+                rate_limiter=Mock(spec=create_events.RequestRateLimiter),
             )
 
         self.assertEqual(raised.exception.accepted_events, 1_000)
         self.assertEqual(raised.exception.accepted_jobs, 1)
         self.assertEqual(raised.exception.total_events, 1_001)
+
+    @patch("create_events.submit_bulk_job")
+    def test_resumed_progress_starts_at_the_accepted_prefix(
+        self, _submit_bulk_job: Mock
+    ) -> None:
+        progress = Mock()
+
+        accepted = create_events.submit_events(
+            [assignment()],
+            total_events=10_001,
+            initial_accepted=10_000,
+            api_key="key",
+            session=Mock(spec=requests.Session),
+            progress=progress,
+            max_workers=1,
+            rate_limiter=Mock(spec=create_events.RequestRateLimiter),
+        )
+
+        self.assertEqual(accepted, 10_001)
+        progress.assert_called_once_with(10_001, 10_001, 1)
+
+    @patch("create_events.submit_bulk_job")
+    def test_reports_only_a_contiguous_accepted_prefix(
+        self, submit_bulk_job: Mock
+    ) -> None:
+        release_first = threading.Event()
+        second_finished = threading.Event()
+
+        def finish_second_job_first(*_args: object, **kwargs: object) -> None:
+            entries = kwargs["payload"]["data"]["attributes"]["events-bulk-create"][
+                "data"
+            ]
+            event_count = sum(
+                len(entry["attributes"]["events"]["data"]) for entry in entries
+            )
+            if event_count == create_events.MAX_EVENTS_PER_JOB:
+                release_first.wait(timeout=2)
+            else:
+                second_finished.set()
+
+        submit_bulk_job.side_effect = finish_second_job_first
+        progress = Mock()
+        with ThreadPoolExecutor(max_workers=1) as runner:
+            submission = runner.submit(
+                create_events.submit_events,
+                [assignment(unique_id=f"event-{index}") for index in range(1_001)],
+                total_events=1_001,
+                api_key="key",
+                session=Mock(spec=requests.Session),
+                progress=progress,
+                max_workers=2,
+                rate_limiter=Mock(spec=create_events.RequestRateLimiter),
+            )
+            self.assertTrue(second_finished.wait(timeout=2))
+            progress.assert_not_called()
+            release_first.set()
+            self.assertEqual(submission.result(timeout=2), 1_001)
+
+        self.assertEqual(
+            progress.call_args_list,
+            [call(1_000, 1_001, 1), call(1_001, 1_001, 2)],
+        )
 
     def test_streaming_submission_requires_an_explicit_total(self) -> None:
         with self.assertRaisesRegex(ValueError, "total_events"):
@@ -686,6 +823,7 @@ class CreateEventsTests(unittest.TestCase):
         self.assertEqual(fetch_profiles.call_args.kwargs["needed"], 6)
         self.assertEqual(fetch_products.call_args.kwargs["needed"], 6)
         self.assertEqual(submit_events.call_args.kwargs["total_events"], 8)
+        self.assertEqual(submit_events.call_args.kwargs["initial_accepted"], 0)
 
     @patch("create_events.submit_events", return_value=600_000)
     @patch("create_events.iter_event_assignments")
@@ -712,6 +850,33 @@ class CreateEventsTests(unittest.TestCase):
         self.assertEqual(fetch_profiles.call_args.kwargs["needed"], 500)
         self.assertEqual(fetch_products.call_args.kwargs["needed"], 10_000)
 
+    @patch("create_events.submit_events", return_value=10)
+    @patch("create_events.iter_event_assignments")
+    @patch("create_events.fetch_catalog_products", return_value=[product()])
+    @patch("create_events.fetch_load_test_profiles", return_value=["profile-1"])
+    def test_resumes_discovery_and_submission_at_an_accepted_prefix(
+        self,
+        _fetch_profiles: Mock,
+        _fetch_products: Mock,
+        iter_assignments: Mock,
+        submit_events: Mock,
+    ) -> None:
+        iter_assignments.return_value = iter([assignment()])
+
+        accepted = create_events.create_events(
+            [create_events.MetricCount("Viewed Product", 10)],
+            overlap_count=0,
+            days=2,
+            resume_at=6,
+            api_key="key",
+            session=Mock(spec=requests.Session),
+        )
+
+        self.assertEqual(accepted, 10)
+        self.assertEqual(iter_assignments.call_args.kwargs["start_index"], 6)
+        self.assertEqual(submit_events.call_args.kwargs["initial_accepted"], 6)
+        self.assertEqual(submit_events.call_args.kwargs["total_events"], 10)
+
     def test_rejects_non_positive_resource_caps(self) -> None:
         for argument in ({"profile_count": 0}, {"product_count": -1}):
             with self.subTest(argument=argument):
@@ -723,6 +888,33 @@ class CreateEventsTests(unittest.TestCase):
                         session=Mock(spec=requests.Session),
                         **argument,
                     )
+
+    def test_rejects_resume_count_beyond_total(self) -> None:
+        with self.assertRaisesRegex(ValueError, "resume count"):
+            create_events.create_events(
+                [create_events.MetricCount("Viewed Product", 10)],
+                overlap_count=0,
+                resume_at=11,
+                api_key="key",
+                session=Mock(spec=requests.Session),
+            )
+
+    @patch("create_events.fetch_catalog_products")
+    @patch("create_events.fetch_load_test_profiles")
+    def test_complete_resume_skips_discovery(
+        self, fetch_profiles: Mock, fetch_products: Mock
+    ) -> None:
+        accepted = create_events.create_events(
+            [create_events.MetricCount("Viewed Product", 10)],
+            overlap_count=0,
+            resume_at=10,
+            api_key="key",
+            session=Mock(spec=requests.Session),
+        )
+
+        self.assertEqual(accepted, 10)
+        fetch_profiles.assert_not_called()
+        fetch_products.assert_not_called()
 
 
 if __name__ == "__main__":
