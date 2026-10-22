@@ -698,6 +698,25 @@ class SubmissionTests(unittest.TestCase):
 
         sleep.assert_called_once_with(create_events.RETRY_BASE_SECONDS)
 
+    def test_unexpected_success_and_redirect_statuses_fail_immediately(self) -> None:
+        for status_code in (200, 204, 302):
+            with self.subTest(status_code=status_code):
+                session = Mock(spec=requests.Session)
+                session.post.return_value = Mock(status_code=status_code)
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    f"unexpected status {status_code}",
+                ):
+                    create_events.submit_bulk_job(
+                        session,
+                        api_key="key",
+                        payload={"data": {}},
+                        sleep=Mock(),
+                    )
+
+                session.post.assert_called_once()
+
     @patch("create_events.submit_bulk_job")
     def test_submit_events_reports_concurrent_progress(
         self, submit_bulk_job: Mock

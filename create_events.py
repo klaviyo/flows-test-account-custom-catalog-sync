@@ -667,6 +667,9 @@ def submit_bulk_job(
             return
         if response.status_code != 429 and response.status_code < 500:
             response.raise_for_status()
+            raise RuntimeError(
+                f"Bulk Events API returned unexpected status {response.status_code}"
+            )
         elif response_retry_index == MAX_RETRIES:
             response.raise_for_status()
         else:
