@@ -300,15 +300,17 @@ using another company's catalog: a feed with independently identified
 variants requires an explicit variant-to-parent-item mapping.
 
 The API accepts up to 1,000 events or 5 MB per job. The script splits larger
-runs and streams bounded batches, with at most 32 jobs in flight, so memory use
+runs and streams bounded batches, with at most 24 jobs in flight, so memory use
 does not grow with the total event count. It limits all initial and retry
-attempts together to 140 jobs per minute, below the steady limit of 150, and
-gives each worker an isolated HTTP session. Transient failures retry up to 12
-times with exponential backoff capped at 30 seconds. Submission cannot advance
-more than 32 jobs beyond the last contiguous accepted batch, which bounds
-possible duplicate work after a resume. Keep the terminal running until every
-job is accepted. An accepted job is queued for asynchronous processing; it
-does not mean every event is immediately visible in Klaviyo.
+attempts together to 100 jobs per minute. Sustained runs at 140 jobs per minute
+repeatedly encountered connection failures despite the API's 150-per-minute
+limit. Each worker has an isolated HTTP session; transport failures replace
+that session and retry up to 30 times with exponential backoff capped at 30
+seconds. Rate-limit and server responses retry up to 12 times. Submission
+cannot advance more than 24 jobs beyond the last contiguous accepted batch,
+which bounds possible duplicate work after a resume. Keep the terminal running
+until every job is accepted. An accepted job is queued for asynchronous
+processing; it does not mean every event is immediately visible in Klaviyo.
 
 If an event run is interrupted, resume after the last accepted event count
 printed by the original run:

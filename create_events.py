@@ -38,6 +38,7 @@ REQUEST_TIMEOUT_SECONDS = 30
 # Large load tests run for hours, so brief API/network outages should not force
 # an operator to restart them.
 MAX_RETRIES = 12
+MAX_CONNECTION_RETRIES = 30
 DEFAULT_RETRY_AFTER_SECONDS = 1.0
 RETRY_BASE_SECONDS = 1.0
 MAX_RETRY_DELAY_SECONDS = 30.0
@@ -47,10 +48,10 @@ CATALOG_PAGE_SIZE = 100
 MAX_EVENTS_PER_JOB = 1_000
 MAX_PAYLOAD_BYTES = 5_000_000
 
-# Stay below the Events API's 150/min steady limit while using concurrency to
-# hide individual request latency.
-SUBMISSION_RATE_PER_MINUTE = 140
-MAX_IN_FLIGHT_JOBS = 32
+# Sustained 140/min runs repeatedly hit write timeouts and remote disconnects.
+# 100/min retains high throughput while leaving operational headroom (FP-4236).
+SUBMISSION_RATE_PER_MINUTE = 100
+MAX_IN_FLIGHT_JOBS = 24
 
 METRIC_NAMES = {
     "viewed-product": "Viewed Product",
@@ -266,7 +267,7 @@ def _retry_delay(response: requests.Response, retry_index: int) -> float:
 def _connection_retry_delay(retry_index: int) -> float:
     """Back off connection retries without growing beyond the outage cadence."""
     return min(
-        RETRY_BASE_SECONDS * (2**retry_index),
+        RETRY_BASE_SECONDS * (2 ** min(retry_index, MAX_RETRIES)),
         MAX_RETRY_DELAY_SECONDS,
     )
 
@@ -636,11 +637,14 @@ def submit_bulk_job(
     api_key: str,
     payload: dict[str, Any],
     rate_limiter: RequestRateLimiter | None = None,
+    replace_session: Callable[[], requests.Session] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """Submit one bulk job, retrying transient failures without duplicating events."""
     url = f"{API_BASE_URL}/event-bulk-create-jobs"
-    for retry_index in range(MAX_RETRIES + 1):
+    connection_retry_index = 0
+    response_retry_index = 0
+    while True:
         if rate_limiter:
             rate_limiter.wait()
         try:
@@ -651,22 +655,27 @@ def submit_bulk_job(
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except (requests.Timeout, requests.ConnectionError):
-            if retry_index == MAX_RETRIES:
+            if connection_retry_index == MAX_CONNECTION_RETRIES:
                 raise
-            sleep(_connection_retry_delay(retry_index))
+            if replace_session is not None:
+                session = replace_session()
+            sleep(_connection_retry_delay(connection_retry_index))
+            connection_retry_index += 1
             continue
 
         if response.status_code == 202:
             return
         if response.status_code != 429 and response.status_code < 500:
             response.raise_for_status()
-        elif retry_index == MAX_RETRIES:
+            raise RuntimeError(
+                f"Bulk Events API returned unexpected status {response.status_code}"
+            )
+        elif response_retry_index == MAX_RETRIES:
             response.raise_for_status()
         else:
-            sleep(_retry_delay(response, retry_index))
+            sleep(_retry_delay(response, response_retry_index))
+            response_retry_index += 1
             continue
-
-    raise RuntimeError("unreachable bulk event retry state")
 
 
 def submit_events(
@@ -707,7 +716,7 @@ def submit_events(
     first_error: Exception | None = None
     exhausted = False
     worker_state = threading.local()
-    worker_sessions: list[requests.Session] = []
+    worker_sessions: set[requests.Session] = set()
     worker_sessions_lock = threading.Lock()
 
     def get_submission_session() -> requests.Session:
@@ -719,8 +728,23 @@ def submit_events(
             worker_session = session_factory()
             worker_state.session = worker_session
             with worker_sessions_lock:
-                worker_sessions.append(worker_session)
+                worker_sessions.add(worker_session)
         return worker_session
+
+    def replace_submission_session() -> requests.Session:
+        """Replace a worker's connection pool after a transport failure."""
+        if session_factory is None:
+            return session
+        previous_session = getattr(worker_state, "session", None)
+        replacement_session = session_factory()
+        worker_state.session = replacement_session
+        with worker_sessions_lock:
+            if previous_session is not None:
+                worker_sessions.discard(previous_session)
+            worker_sessions.add(replacement_session)
+        if previous_session is not None:
+            previous_session.close()
+        return replacement_session
 
     def submit_payload(payload: dict[str, Any]) -> None:
         """Submit one payload through the current worker's session."""
@@ -729,6 +753,9 @@ def submit_events(
             api_key=api_key,
             payload=payload,
             rate_limiter=limiter,
+            replace_session=(
+                replace_submission_session if session_factory is not None else None
+            ),
             sleep=sleep,
         )
 
