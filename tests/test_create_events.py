@@ -7,6 +7,7 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 import requests
@@ -66,6 +67,8 @@ class ParserTests(unittest.TestCase):
                 "500",
                 "--products",
                 "10000",
+                "--product-feed",
+                "feed.json",
                 "--resume-at",
                 "1000",
             ]
@@ -76,6 +79,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(arguments.days, 30)
         self.assertEqual(arguments.profiles, 500)
         self.assertEqual(arguments.products, 10_000)
+        self.assertEqual(arguments.product_feed, Path("feed.json"))
         self.assertEqual(arguments.resume_at, 1_000)
 
     def test_optional_positive_integer_arguments(self) -> None:
@@ -86,6 +90,7 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(arguments.days)
         self.assertIsNone(arguments.profiles)
         self.assertIsNone(arguments.products)
+        self.assertIsNone(arguments.product_feed)
         self.assertEqual(arguments.resume_at, 0)
         for option in ("--days", "--profiles", "--products"):
             for value in ("0", "-1", "nope"):
@@ -223,6 +228,35 @@ class DiscoveryTests(unittest.TestCase):
         request_params = get_json.call_args.kwargs["params"]
         self.assertNotIn("filter", request_params)
 
+    @patch("create_events.load_feed")
+    def test_loads_exact_leading_products_from_feed(self, load_feed: Mock) -> None:
+        load_feed.return_value = [
+            {"id": "feed-1", "price": "12.50"},
+            {"id": "feed-2", "price": 20},
+            {"id": "feed-3", "price": "30.00"},
+        ]
+
+        products = create_events.load_feed_products(Path("feed.json"), needed=2)
+
+        self.assertEqual(
+            products,
+            [product("feed-1", 12.5), product("feed-2", 20.0)],
+        )
+
+    @patch("create_events.load_feed")
+    def test_feed_product_selection_rejects_incomplete_input(
+        self, load_feed: Mock
+    ) -> None:
+        for feed_products, message in (
+            ([{"id": "feed-1", "price": "10"}], "1 products; 2 required"),
+            ([{"id": "feed-1"}] * 2, "must have id and price"),
+            ([{"id": "feed-1", "price": "invalid"}] * 2, "invalid price"),
+        ):
+            with self.subTest(message=message):
+                load_feed.return_value = feed_products
+                with self.assertRaisesRegex(ValueError, message):
+                    create_events.load_feed_products(Path("feed.json"), needed=2)
+
 
 class ApiRequestTests(unittest.TestCase):
     """Verify API retry and error behavior."""
@@ -337,6 +371,32 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(
             [event.product.item_id for event in assignments],
             ["one", "two", "one"],
+        )
+
+    def test_three_profiles_each_receive_all_fifty_products(self) -> None:
+        profile_ids = [f"profile-{index}" for index in range(3)]
+        assignments = create_events.allocate_events(
+            [create_events.MetricCount("Viewed Product", 150)],
+            overlap_count=0,
+            profile_ids=profile_ids,
+            products=[product(f"product-{index}") for index in range(50)],
+        )
+
+        products_by_profile = {
+            profile_id: {
+                event.product.item_id
+                for event in assignments
+                if event.profile_id == profile_id
+            }
+            for profile_id in profile_ids
+        }
+
+        self.assertEqual(
+            {
+                profile_id: len(products)
+                for profile_id, products in products_by_profile.items()
+            },
+            {profile_id: 50 for profile_id in profile_ids},
         )
 
     def test_assignment_iterator_does_not_precompute_events(self) -> None:
@@ -1013,6 +1073,37 @@ class CreateEventsTests(unittest.TestCase):
         self.assertEqual(fetch_profiles.call_args.kwargs["needed"], 500)
         self.assertEqual(fetch_products.call_args.kwargs["needed"], 10_000)
 
+    def test_uses_feed_product_order_when_requested(self) -> None:
+        feed_path = Path("feed.json")
+        with (
+            patch(
+                "create_events.fetch_load_test_profiles",
+                return_value=["profile-1"],
+            ),
+            patch("create_events.fetch_catalog_products") as fetch_products,
+            patch(
+                "create_events.load_feed_products",
+                return_value=[product("feed-1"), product("feed-2")],
+            ) as load_feed_products,
+            patch(
+                "create_events.iter_event_assignments",
+                return_value=iter([assignment()]),
+            ),
+            patch("create_events.submit_events", return_value=2),
+        ):
+            accepted = create_events.create_events(
+                [create_events.MetricCount("Viewed Product", 2)],
+                overlap_count=0,
+                product_count=2,
+                product_feed=feed_path,
+                api_key="key",
+                session=Mock(spec=requests.Session),
+            )
+
+        self.assertEqual(accepted, 2)
+        load_feed_products.assert_called_once_with(feed_path, 2)
+        fetch_products.assert_not_called()
+
     @patch("create_events.submit_events", return_value=10)
     @patch("create_events.iter_event_assignments")
     @patch("create_events.fetch_catalog_products", return_value=[product()])
@@ -1051,6 +1142,16 @@ class CreateEventsTests(unittest.TestCase):
                         session=Mock(spec=requests.Session),
                         **argument,
                     )
+
+    def test_product_feed_requires_product_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires an explicit product count"):
+            create_events.create_events(
+                [create_events.MetricCount("Viewed Product", 1)],
+                overlap_count=0,
+                product_feed=Path("feed.json"),
+                api_key="key",
+                session=Mock(spec=requests.Session),
+            )
 
     def test_rejects_resume_count_beyond_total(self) -> None:
         with self.assertRaisesRegex(ValueError, "resume count"):

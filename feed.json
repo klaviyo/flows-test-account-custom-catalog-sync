@@ -12,7 +12,7 @@
       "Brushes"
     ],
     "brand": "BabyBliss",
-    "price": "1289.30",
+    "price": "1287.30",
     "currency": "USD",
     "sku": "BAB-b7f72c86479a458c995ed6fb3cec74a2",
     "inventory_quantity": 627,
@@ -31,7 +31,7 @@
       "Accessories"
     ],
     "brand": "BoldStrike",
-    "price": "1706.78",
+    "price": "1704.78",
     "currency": "USD",
     "sku": "BOL-d9907fa494c04de7871b3c4ba946c70a",
     "inventory_quantity": 907,
@@ -50,7 +50,7 @@
       "Monitors"
     ],
     "brand": "FlexCore",
-    "price": "2022.33",
+    "price": "2020.33",
     "currency": "USD",
     "sku": "FLE-25308550894a4887a6c8499be1f8127e",
     "inventory_quantity": 102,
@@ -69,7 +69,7 @@
       "Peripherals"
     ],
     "brand": "GreenChef",
-    "price": "2285.51",
+    "price": "2283.51",
     "currency": "USD",
     "sku": "GRE-1a1696114d8c40ce8de48e4d528ecc15",
     "inventory_quantity": 953,
@@ -88,7 +88,7 @@
       "Headphones"
     ],
     "brand": "HydroSync",
-    "price": "766.76",
+    "price": "764.76",
     "currency": "USD",
     "sku": "HYD-6bda94f9b7d544188b931ab7b8c24030",
     "inventory_quantity": 941,
@@ -107,7 +107,7 @@
       "Laptops"
     ],
     "brand": "IronClad",
-    "price": "297.04",
+    "price": "295.04",
     "currency": "USD",
     "sku": "IRO-a4a20b707aea46f09bf4a889b5f04e01",
     "inventory_quantity": 233,
@@ -126,7 +126,7 @@
       "Controllers"
     ],
     "brand": "LumiDesk",
-    "price": "56.79",
+    "price": "54.79",
     "currency": "USD",
     "sku": "LUM-5e922b1212f04672b1bdeaac7702c2dd",
     "inventory_quantity": 105,
@@ -145,7 +145,7 @@
       "Watches"
     ],
     "brand": "PureGlow",
-    "price": "1137.11",
+    "price": "1135.11",
     "currency": "USD",
     "sku": "PUR-7f1f109b24a74fd08a9d5259b7ea48b8",
     "inventory_quantity": 325,
@@ -164,7 +164,7 @@
       "Seating"
     ],
     "brand": "SilkThread",
-    "price": "1844.43",
+    "price": "1842.43",
     "currency": "USD",
     "sku": "SIL-7e0b5f23bece44f4880721ea845070a7",
     "inventory_quantity": 104,
@@ -183,7 +183,7 @@
       "Desks"
     ],
     "brand": "SwiftEdge",
-    "price": "1588.59",
+    "price": "1586.59",
     "currency": "USD",
     "sku": "SWI-32ff23a92f59495c9d6f89e2b9d0c406",
     "inventory_quantity": 907,
@@ -202,7 +202,7 @@
       "Snacks"
     ],
     "brand": "TerraRoot",
-    "price": "1008.74",
+    "price": "1006.74",
     "currency": "USD",
     "sku": "TER-317c8f64808741418e0a981bb889ce03",
     "inventory_quantity": 682,
@@ -221,7 +221,7 @@
       "Wearables"
     ],
     "brand": "TitanGrip",
-    "price": "1882.19",
+    "price": "1880.19",
     "currency": "USD",
     "sku": "TIT-55bf31f513f04b488b22fed259f68152",
     "inventory_quantity": 64,
@@ -240,7 +240,7 @@
       "Portable"
     ],
     "brand": "TrailWay",
-    "price": "2303.78",
+    "price": "2301.78",
     "currency": "USD",
     "sku": "TRA-ee7218d2e54547839156b4dfcf0de7bf",
     "inventory_quantity": 787,
@@ -259,7 +259,7 @@
       "Vacuums"
     ],
     "brand": "UrbanNest",
-    "price": "2335.22",
+    "price": "2333.22",
     "currency": "USD",
     "sku": "URB-d5ab4a5b80804c55bef0619cb20410ff",
     "inventory_quantity": 533,
@@ -278,7 +278,7 @@
       "Smart"
     ],
     "brand": "VoltEdge",
-    "price": "332.31",
+    "price": "330.31",
     "currency": "USD",
     "sku": "VOL-b13dd2cf0487409d9e1470207a92f6bc",
     "inventory_quantity": 91,
@@ -297,7 +297,7 @@
       "Bakeware"
     ],
     "brand": "BabyBliss",
-    "price": "1902.66",
+    "price": "1900.66",
     "currency": "USD",
     "sku": "BAB-c0d4133bac654b22a5d65069f8fe3900",
     "inventory_quantity": 292,
@@ -316,7 +316,7 @@
       "Containers"
     ],
     "brand": "BoldStrike",
-    "price": "1170.48",
+    "price": "1168.48",
     "currency": "USD",
     "sku": "BOL-2ebd3e225c7d45f9b5b79eb9d6f1a6bc",
     "inventory_quantity": 918,
@@ -335,7 +335,7 @@
       "Gear"
     ],
     "brand": "FlexCore",
-    "price": "2236.11",
+    "price": "2234.11",
     "currency": "USD",
     "sku": "FLE-1b6c6453597d497c89988e1622e0dea7",
     "inventory_quantity": 309,
@@ -354,7 +354,7 @@
       "Shoes"
     ],
     "brand": "GreenChef",
-    "price": "1471.05",
+    "price": "1469.05",
     "currency": "USD",
     "sku": "GRE-69d03da0e5844cbf91f4510b5fb6d29c",
     "inventory_quantity": 686,
@@ -373,7 +373,7 @@
       "STEM"
     ],
     "brand": "HydroSync",
-    "price": "476.45",
+    "price": "474.45",
     "currency": "USD",
     "sku": "HYD-f7f1dd100cec41d389d41ac8c6c0cab3",
     "inventory_quantity": 130,
@@ -392,7 +392,7 @@
       "Brushes"
     ],
     "brand": "IronClad",
-    "price": "1626.51",
+    "price": "1624.51",
     "currency": "USD",
     "sku": "IRO-9a435760bb534381a0696a2e83b769da",
     "inventory_quantity": 726,
@@ -411,7 +411,7 @@
       "Accessories"
     ],
     "brand": "LumiDesk",
-    "price": "1165.83",
+    "price": "1163.83",
     "currency": "USD",
     "sku": "LUM-aca1abdc3f40458494394e7bcbf00d42",
     "inventory_quantity": 437,
@@ -430,7 +430,7 @@
       "Monitors"
     ],
     "brand": "PureGlow",
-    "price": "41.73",
+    "price": "39.73",
     "currency": "USD",
     "sku": "PUR-bfc1df8953994488a40e4953e4bbe421",
     "inventory_quantity": 323,
@@ -449,7 +449,7 @@
       "Peripherals"
     ],
     "brand": "SilkThread",
-    "price": "2375.28",
+    "price": "2373.28",
     "currency": "USD",
     "sku": "SIL-f7ce9e51c64a43dbb9f04d0c5a09c134",
     "inventory_quantity": 413,
@@ -468,7 +468,7 @@
       "Headphones"
     ],
     "brand": "SwiftEdge",
-    "price": "831.44",
+    "price": "829.44",
     "currency": "USD",
     "sku": "SWI-3d68840bb8994941baff64bf84a82755",
     "inventory_quantity": 734,
@@ -487,7 +487,7 @@
       "Laptops"
     ],
     "brand": "TerraRoot",
-    "price": "867.27",
+    "price": "865.27",
     "currency": "USD",
     "sku": "TER-777b3e954cf84c669effad6be9cf81c9",
     "inventory_quantity": 202,
@@ -506,7 +506,7 @@
       "Controllers"
     ],
     "brand": "TitanGrip",
-    "price": "2162.90",
+    "price": "2160.90",
     "currency": "USD",
     "sku": "TIT-bb3ba6a58e80460eb7392ca06c533f90",
     "inventory_quantity": 554,
@@ -525,7 +525,7 @@
       "Watches"
     ],
     "brand": "TrailWay",
-    "price": "406.57",
+    "price": "404.57",
     "currency": "USD",
     "sku": "TRA-028b24fa8f7042fa8625e2f8160b22aa",
     "inventory_quantity": 972,
@@ -544,7 +544,7 @@
       "Seating"
     ],
     "brand": "UrbanNest",
-    "price": "1196.96",
+    "price": "1194.96",
     "currency": "USD",
     "sku": "URB-9c2f0716ddd04ffba6dbc59760c103e3",
     "inventory_quantity": 658,
@@ -563,7 +563,7 @@
       "Desks"
     ],
     "brand": "VoltEdge",
-    "price": "1316.87",
+    "price": "1314.87",
     "currency": "USD",
     "sku": "VOL-7074fa720b854a1d9f245b3ba78c0795",
     "inventory_quantity": 228,
@@ -582,7 +582,7 @@
       "Snacks"
     ],
     "brand": "BabyBliss",
-    "price": "953.92",
+    "price": "951.92",
     "currency": "USD",
     "sku": "BAB-3ed7ef5d5f1c4804a026f65f918f8287",
     "inventory_quantity": 260,
@@ -601,7 +601,7 @@
       "Wearables"
     ],
     "brand": "BoldStrike",
-    "price": "2388.58",
+    "price": "2386.58",
     "currency": "USD",
     "sku": "BOL-26e9f703e4364f599f40bfaf71f28b7c",
     "inventory_quantity": 41,
@@ -620,7 +620,7 @@
       "Portable"
     ],
     "brand": "FlexCore",
-    "price": "88.99",
+    "price": "86.99",
     "currency": "USD",
     "sku": "FLE-785b466ee0634b0a989edfbc7f220176",
     "inventory_quantity": 968,
@@ -639,7 +639,7 @@
       "Vacuums"
     ],
     "brand": "GreenChef",
-    "price": "1665.42",
+    "price": "1663.42",
     "currency": "USD",
     "sku": "GRE-a7e1fde6b76e4417a91eeca49a6927b3",
     "inventory_quantity": 519,
@@ -658,7 +658,7 @@
       "Smart"
     ],
     "brand": "HydroSync",
-    "price": "344.15",
+    "price": "342.15",
     "currency": "USD",
     "sku": "HYD-a92347029dc249ebb42bcc69c1b9d5b5",
     "inventory_quantity": 572,
@@ -677,7 +677,7 @@
       "Bakeware"
     ],
     "brand": "IronClad",
-    "price": "1954.95",
+    "price": "1952.95",
     "currency": "USD",
     "sku": "IRO-bf25d9d8483547f4aaaec413ad5b95ac",
     "inventory_quantity": 480,
@@ -696,7 +696,7 @@
       "Containers"
     ],
     "brand": "LumiDesk",
-    "price": "2246.20",
+    "price": "2244.20",
     "currency": "USD",
     "sku": "LUM-ba417ccce7c84de98675099169a8ea16",
     "inventory_quantity": 715,
@@ -715,7 +715,7 @@
       "Gear"
     ],
     "brand": "PureGlow",
-    "price": "1442.56",
+    "price": "1440.56",
     "currency": "USD",
     "sku": "PUR-8f154cde436649948ae71ba46aeda00b",
     "inventory_quantity": 645,
@@ -734,7 +734,7 @@
       "Shoes"
     ],
     "brand": "SilkThread",
-    "price": "1324.41",
+    "price": "1322.41",
     "currency": "USD",
     "sku": "SIL-07c8812390ff4240ba4811fe80d2ae6f",
     "inventory_quantity": 802,
@@ -753,7 +753,7 @@
       "STEM"
     ],
     "brand": "SwiftEdge",
-    "price": "667.53",
+    "price": "665.53",
     "currency": "USD",
     "sku": "SWI-d6a81d14a04049d4b9f5efed70234d43",
     "inventory_quantity": 93,
@@ -772,7 +772,7 @@
       "Brushes"
     ],
     "brand": "TerraRoot",
-    "price": "1846.92",
+    "price": "1844.92",
     "currency": "USD",
     "sku": "TER-1b1360646a1a43b388aad6193888248d",
     "inventory_quantity": 254,
@@ -791,7 +791,7 @@
       "Accessories"
     ],
     "brand": "TitanGrip",
-    "price": "1849.52",
+    "price": "1847.52",
     "currency": "USD",
     "sku": "TIT-12cb78c5f1624f6183a613db4c38d243",
     "inventory_quantity": 788,
@@ -810,7 +810,7 @@
       "Monitors"
     ],
     "brand": "TrailWay",
-    "price": "1976.43",
+    "price": "1974.43",
     "currency": "USD",
     "sku": "TRA-92c3b90a3cce4dc79424f3ff18e5b16f",
     "inventory_quantity": 459,
@@ -829,7 +829,7 @@
       "Peripherals"
     ],
     "brand": "UrbanNest",
-    "price": "1683.55",
+    "price": "1681.55",
     "currency": "USD",
     "sku": "URB-8feaa28ffedc44d4be68aa4213814209",
     "inventory_quantity": 317,
@@ -848,7 +848,7 @@
       "Headphones"
     ],
     "brand": "VoltEdge",
-    "price": "2395.98",
+    "price": "2393.98",
     "currency": "USD",
     "sku": "VOL-02e4903bcbee4a48b9766267be2e9383",
     "inventory_quantity": 35,
@@ -867,7 +867,7 @@
       "Laptops"
     ],
     "brand": "BabyBliss",
-    "price": "1079.42",
+    "price": "1077.42",
     "currency": "USD",
     "sku": "BAB-9d936fdfc9c0451db92bb6f2b6619021",
     "inventory_quantity": 873,
@@ -886,7 +886,7 @@
       "Controllers"
     ],
     "brand": "BoldStrike",
-    "price": "2333.79",
+    "price": "2331.79",
     "currency": "USD",
     "sku": "BOL-83e751b7ee9e4d5790625bdd3e17476b",
     "inventory_quantity": 830,
@@ -905,7 +905,7 @@
       "Watches"
     ],
     "brand": "FlexCore",
-    "price": "483.76",
+    "price": "481.76",
     "currency": "USD",
     "sku": "FLE-531072dfc8fe40c0bf92d7f92879957a",
     "inventory_quantity": 641,
@@ -924,7 +924,7 @@
       "Seating"
     ],
     "brand": "GreenChef",
-    "price": "181.17",
+    "price": "179.17",
     "currency": "USD",
     "sku": "GRE-ddef14dd8db54a47a2424cd85b711851",
     "inventory_quantity": 160,
@@ -943,7 +943,7 @@
       "Desks"
     ],
     "brand": "HydroSync",
-    "price": "12.95",
+    "price": "10.95",
     "currency": "USD",
     "sku": "HYD-c82589e623ef460fa91b10eadaf24971",
     "inventory_quantity": 845,
