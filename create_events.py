@@ -27,9 +27,12 @@ from concurrent import futures
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from itertools import islice
+from pathlib import Path
 from typing import Any
 
 import requests
+
+from catalog_tools import load_feed
 
 API_BASE_URL = "https://a.klaviyo.com/api"
 API_REVISION = "2026-10-15"
@@ -231,6 +234,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="use at most the first number of priced catalog products, then cycle",
     )
     parser.add_argument(
+        "--product-feed",
+        type=Path,
+        help=(
+            "select products from the beginning of this local feed instead of "
+            "Catalog API order; requires --products"
+        ),
+    )
+    parser.add_argument(
         "--resume-at",
         type=non_negative_int,
         default=0,
@@ -381,6 +392,30 @@ def fetch_catalog_products(
                 break
         url = document.get("links", {}).get("next")
         params = None
+    return products
+
+
+def load_feed_products(feed_path: Path, needed: int) -> list[CatalogProduct]:
+    """Load an exact leading product pool shared with feed update commands."""
+    feed_products = load_feed(feed_path)
+    if len(feed_products) < needed:
+        raise ValueError(
+            f"{feed_path} contains {len(feed_products)} products; {needed} required"
+        )
+
+    products: list[CatalogProduct] = []
+    for index, feed_product in enumerate(feed_products[:needed], start=1):
+        item_id = feed_product.get("id")
+        price = feed_product.get("price")
+        if not item_id or price is None:
+            raise ValueError(f"{feed_path} product {index} must have id and price")
+        try:
+            parsed_price = float(price)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"{feed_path} product {index} has invalid price {price!r}"
+            ) from error
+        products.append(CatalogProduct(item_id=str(item_id), price=parsed_price))
     return products
 
 
@@ -839,6 +874,7 @@ def create_events(
     days: int | None = None,
     profile_count: int | None = None,
     product_count: int | None = None,
+    product_feed: Path | None = None,
     resume_at: int = 0,
     api_key: str,
     session: requests.Session | None = None,
@@ -855,6 +891,8 @@ def create_events(
     ):
         if resource_count is not None and resource_count <= 0:
             raise ValueError(f"{resource_name} must be positive")
+    if product_feed is not None and product_count is None:
+        raise ValueError("product feed requires an explicit product count")
     total_events = sum(metric.count for metric in combined_counts)
     if resume_at < 0 or resume_at > total_events:
         raise ValueError("resume count must be within the requested event count")
@@ -879,12 +917,15 @@ def create_events(
             needed=profiles_needed,
             sleep=sleep,
         )
-        products = fetch_catalog_products(
-            request_session,
-            api_key=api_key,
-            needed=products_needed,
-            sleep=sleep,
-        )
+        if product_feed is None:
+            products = fetch_catalog_products(
+                request_session,
+                api_key=api_key,
+                needed=products_needed,
+                sleep=sleep,
+            )
+        else:
+            products = load_feed_products(product_feed, products_needed)
         assignments = iter_event_assignments(
             combined_counts,
             overlap_count=overlap_count,
@@ -929,6 +970,7 @@ def main() -> int:
             days=arguments.days,
             profile_count=arguments.profiles,
             product_count=arguments.products,
+            product_feed=arguments.product_feed,
             resume_at=arguments.resume_at,
             api_key=api_key,
             progress=lambda accepted, total, jobs: print(
@@ -941,6 +983,7 @@ def main() -> int:
         RuntimeError,
         ValueError,
         KeyError,
+        OSError,
     ) as error:
         print(f"Event creation failed: {error}")
         return 1

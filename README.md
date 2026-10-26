@@ -235,6 +235,22 @@ and first 10,000 priced products. Other profiles and products are not used.
 If a requested pool size exceeds what the account contains, the script uses
 all available resources in that pool.
 
+Catalog API order is not feed order. When a test must create events for the
+same leading products that `update_products.py --count` will change, select
+products directly from the feed:
+
+```bash
+python3 create_events.py \
+  --metric viewed-product=150 \
+  --profiles 3 \
+  --products 50 \
+  --product-feed feed.json
+```
+
+This produces 50 events per profile across the same first 50 feed products
+that `update_products.py --count 50` updates. `--product-feed` requires an
+explicit `--products` value.
+
 Repeated arguments for the same metric are added together. The script queries
 only profiles where `load_test` is `true`. It uses distinct profiles and
 products first, then cycles through the available pool when an event count is
